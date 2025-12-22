@@ -35,4 +35,7 @@ remappedSrc/
 Thumbs.db
 *.log
 
-!gradle/wrapper/gradle-wrapper.jar
+# Gradle wrapper en submódulos (solo queremos el de la raíz)
+eventui-common/gradle/
+eventui-core/gradle/
+eventui-fabric/gradle/
