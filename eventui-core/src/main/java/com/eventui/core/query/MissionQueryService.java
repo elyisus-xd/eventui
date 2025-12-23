@@ -14,10 +14,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Implementación del servicio de queries de misiones.
- * Implementa la interfaz del contrato y traduce entidades internas a DTOs.
- */
 public class MissionQueryService implements MissionQuery {
     private final MissionRegistry registry;
     private final PlayerStateManager stateManager;
@@ -37,7 +33,7 @@ public class MissionQueryService implements MissionQuery {
     public List<MissionDTO> getByState(UUID playerId, MissionState state) {
         PlayerMissionData playerData = stateManager.getOrCreate(playerId);
         return playerData.getMissionsByState(state).stream()
-                .map(this::toDTO)
+                .map(mission -> toDTO(playerId, mission))
                 .toList();
     }
 
@@ -45,7 +41,7 @@ public class MissionQueryService implements MissionQuery {
     public Optional<MissionDTO> getById(UUID playerId, String missionId) {
         PlayerMissionData playerData = stateManager.getOrCreate(playerId);
         return playerData.getMission(missionId)
-                .map(this::toDTO);
+                .map(mission -> toDTO(playerId, mission));
     }
 
     @Override
@@ -94,10 +90,8 @@ public class MissionQueryService implements MissionQuery {
         if (missionOpt.isEmpty()) return false;
         Mission mission = missionOpt.get();
 
-        // Verificar estado
         if (mission.getState() != MissionState.AVAILABLE) return false;
 
-        // Verificar prerequisites
         if (mission.hasPrerequisites()) {
             for (String prereqId : mission.getPrerequisites()) {
                 Optional<Mission> prereq = playerData.getMission(prereqId);
@@ -115,25 +109,23 @@ public class MissionQueryService implements MissionQuery {
         PlayerMissionData playerData = stateManager.getOrCreate(playerId);
         return playerData.getAllMissions().stream()
                 .filter(m -> category.equals(m.getCategory()))
-                .map(this::toDTO)
+                .map(mission -> toDTO(playerId, mission))
                 .toList();
     }
 
     /**
-     * Convierte una entidad Mission interna a DTO público.
+     * Convierte una entidad Mission interna a DTO público CON PROGRESO.
      */
-    private MissionDTO toDTO(Mission mission) {
+    private MissionDTO toDTO(UUID playerId, Mission mission) {
         var objective = mission.getPrimaryObjective();
         int progress = 0;
         int target = 0;
 
         if (objective != null) {
             target = objective.getCount();
-            // Solo obtener progreso si la misión está activa
+            // Obtener progreso si la misión está activa
             if (mission.getState() == MissionState.ACTIVE) {
-                // Necesitamos el playerId, lo obtenemos del contexto
-                // Por ahora usamos 0 como placeholder, se mejorará en la fachada
-                progress = 0; // TODO: mejorar esto
+                progress = progressTracker.getProgress(playerId, mission.getId(), objective.getId());
             }
         }
 

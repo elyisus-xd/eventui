@@ -19,6 +19,9 @@ public class EventUICommand {
                         .then(Commands.literal("missions")
                                 .executes(EventUICommand::listMissions)
                         )
+                        .then(Commands.literal("activate")
+                                .executes(EventUICommand::activateMission)
+                        )
         );
     }
 
@@ -53,7 +56,6 @@ public class EventUICommand {
 
         var query = EventUIFabricMod.getCore().getQueryService();
 
-        // Obtener misiones por estado
         var available = query.getAvailableMissions(player.getUUID());
         var active = query.getActiveMissions(player.getUUID());
         var completed = query.getCompletedMissions(player.getUUID());
@@ -76,5 +78,38 @@ public class EventUICommand {
         );
 
         return 1;
+    }
+
+    private static int activateMission(CommandContext<CommandSourceStack> context) {
+        if (!(context.getSource().getEntity() instanceof ServerPlayer player)) {
+            context.getSource().sendFailure(Component.literal("This command can only be run by a player"));
+            return 0;
+        }
+
+        var query = EventUIFabricMod.getCore().getQueryService();
+        var available = query.getAvailableMissions(player.getUUID());
+
+        if (available.isEmpty()) {
+            context.getSource().sendFailure(Component.literal("§cNo available missions to activate"));
+            return 0;
+        }
+
+        var mission = available.get(0);
+        var result = EventUIFabricMod.getCore()
+                .getCommandService()
+                .activateMission(player.getUUID(), mission.id());
+
+        if (result.isSuccess()) {
+            context.getSource().sendSuccess(
+                    () -> Component.literal("§aMission activated: " + mission.title()),
+                    false
+            );
+            return 1;
+        } else {
+            context.getSource().sendFailure(
+                    Component.literal("§cFailed: " + result.getError())
+            );
+            return 0;
+        }
     }
 }

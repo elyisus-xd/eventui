@@ -20,29 +20,24 @@ public abstract class LivingEntityMixin {
     private void onEntityDeath(DamageSource damageSource, CallbackInfo ci) {
         LivingEntity self = (LivingEntity) (Object) this;
 
-        // Verificar si fue asesinado por un jugador
         if (damageSource.getEntity() instanceof Player player) {
-            // Obtener tipo de entidad
             String entityType = BuiltInRegistries.ENTITY_TYPE
                     .getKey(self.getType())
                     .toString();
 
-            // Obtener dimensión
             ResourceKey<Level> dimension = self.level().dimension();
             String dimensionName = dimension.location().toString();
 
-            // Crear señal
             GameSignal signal = new GameSignal.EntityKilled(
                     player.getUUID(),
                     entityType,
                     dimensionName
             );
 
-            // Emitir al Core
             try {
                 EventUIFabricMod.getCore().getSignalBus().emit(signal);
 
-                EventUIFabricMod.LOGGER.debug(
+                EventUIFabricMod.LOGGER.info(
                         "Entity killed signal: {} killed {} in {}",
                         player.getName().getString(),
                         entityType,
