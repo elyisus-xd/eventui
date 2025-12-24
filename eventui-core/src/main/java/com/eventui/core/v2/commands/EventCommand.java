@@ -1,0 +1,159 @@
+package com.eventui.core.v2.commands;
+
+import com.eventui.api.event.EventDefinition;
+import com.eventui.api.event.EventProgress;
+import com.eventui.core.v2.EventUIPlugin;
+import com.eventui.core.v2.event.EventProgressImpl;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+
+import java.util.Optional;
+
+/**
+ * Comando de testing para la FASE 1.
+ * Comandos:
+ * - /eventui list - Lista todos los eventos cargados
+ * - /eventui info <id> - Muestra información de un evento
+ * - /eventui progress <id> - Muestra tu progreso en un evento
+ * - /eventui start <id> - Inicia un evento
+ * - /eventui reload - Recarga eventos desde JSON
+ */
+public class EventCommand implements CommandExecutor {
+
+    private final EventUIPlugin plugin;
+
+    public EventCommand(EventUIPlugin plugin) {
+        this.plugin = plugin;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (args.length == 0) {
+            sender.sendMessage("§6EventUI v2 Commands:");
+            sender.sendMessage("§e/eventui list §7- List all events");
+            sender.sendMessage("§e/eventui info <id> §7- Show event info");
+            sender.sendMessage("§e/eventui progress <id> §7- Show your progress");
+            sender.sendMessage("§e/eventui start <id> §7- Start an event");
+            sender.sendMessage("§e/eventui reload §7- Reload events");
+            return true;
+        }
+
+        String subcommand = args[0].toLowerCase();
+
+        switch (subcommand) {
+            case "list" -> handleList(sender);
+            case "info" -> handleInfo(sender, args);
+            case "progress" -> handleProgress(sender, args);
+            case "start" -> handleStart(sender, args);
+            case "reload" -> handleReload(sender);
+            default -> sender.sendMessage("§cUnknown command. Use /eventui for help");
+        }
+
+        return true;
+    }
+
+    private void handleList(CommandSender sender) {
+        var events = plugin.getStorage().getAllEventDefinitions();
+
+        if (events.isEmpty()) {
+            sender.sendMessage("§cNo events loaded!");
+            return;
+        }
+
+        sender.sendMessage("§6=== Loaded Events ===");
+        events.values().forEach(event ->
+                sender.sendMessage("§e" + event.getId() + " §7- §f" + event.getDisplayName())
+        );
+    }
+
+    private void handleInfo(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui info <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+        Optional<EventDefinition> eventOpt = plugin.getStorage().getEventDefinition(eventId);
+
+        if (eventOpt.isEmpty()) {
+            sender.sendMessage("§cEvent not found: " + eventId);
+            return;
+        }
+
+        EventDefinition event = eventOpt.get();
+        sender.sendMessage("§6=== Event Info ===");
+        sender.sendMessage("§eID: §f" + event.getId());
+        sender.sendMessage("§eName: §f" + event.getDisplayName());
+        sender.sendMessage("§eDescription: §f" + event.getDescription());
+        sender.sendMessage("§eObjectives: §f" + event.getObjectives().size());
+
+        event.getObjectives().forEach(obj ->
+                sender.sendMessage("  §7- " + obj.getDescription() + " §8(" + obj.getTargetAmount() + ")")
+        );
+    }
+
+    private void handleProgress(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can check progress!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui progress <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+        Optional<EventProgress> progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+
+        if (progressOpt.isEmpty()) {
+            sender.sendMessage("§cYou haven't started this event yet!");
+            return;
+        }
+
+        EventProgress progress = progressOpt.get();
+        sender.sendMessage("§6=== Your Progress ===");
+        sender.sendMessage("§eEvent: §f" + eventId);
+        sender.sendMessage("§eState: §f" + progress.getState());
+        sender.sendMessage("§eOverall Progress: §f" + String.format("%.1f%%", progress.getOverallProgress() * 100));
+
+        progress.getObjectivesProgress().forEach(obj ->
+                sender.sendMessage("  §7- " + obj.getObjectiveId() + ": §f" +
+                        obj.getCurrentAmount() + "/" + obj.getTargetAmount())
+        );
+    }
+
+    private void handleStart(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can start events!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui start <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+
+        try {
+            EventProgressImpl progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
+            progress.start();
+            sender.sendMessage("§aStarted event: " + eventId);
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to start event: " + e.getMessage());
+        }
+    }
+
+    private void handleReload(CommandSender sender) {
+        if (!sender.hasPermission("eventui.admin")) {
+            sender.sendMessage("§cYou don't have permission!");
+            return;
+        }
+
+        plugin.reloadEvents();
+        sender.sendMessage("§aEvents reloaded successfully!");
+    }
+}
