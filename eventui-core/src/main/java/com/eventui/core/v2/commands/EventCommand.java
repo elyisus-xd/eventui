@@ -139,11 +139,42 @@ public class EventCommand implements CommandExecutor {
         String eventId = args[1];
 
         try {
+            // Verificar si el evento existe
+            var eventDefOpt = plugin.getStorage().getEventDefinition(eventId);
+            if (eventDefOpt.isEmpty()) {
+                sender.sendMessage("§cEvent not found: " + eventId);
+                return;
+            }
+
+            var eventDef = eventDefOpt.get();
+
+            // Verificar progreso existente
+            var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+
+            if (progressOpt.isPresent()) {
+                var progress = progressOpt.get();
+
+                if (progress.getState() == com.eventui.api.event.EventState.COMPLETED) {
+                    sender.sendMessage("§cYou have already completed this event!");
+                    sender.sendMessage("§7This event cannot be repeated.");
+                    return;
+                }
+
+                if (progress.getState() == com.eventui.api.event.EventState.IN_PROGRESS) {
+                    sender.sendMessage("§eThis event is already in progress!");
+                    sender.sendMessage("§7Use /eventui progress " + eventId + " to check your progress.");
+                    return;
+                }
+            }
+
+            // Iniciar el evento
             EventProgressImpl progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
             progress.start();
-            sender.sendMessage("§aStarted event: " + eventId);
+            sender.sendMessage("§aStarted event: " + eventDef.getDisplayName());
+
         } catch (Exception e) {
             sender.sendMessage("§cFailed to start event: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 

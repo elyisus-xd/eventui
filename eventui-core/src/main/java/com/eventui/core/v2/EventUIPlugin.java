@@ -1,22 +1,15 @@
 package com.eventui.core.v2;
 
 import com.eventui.api.event.EventDefinition;
-import com.eventui.core.v2.commands.EventCommand;
+import com.eventui.core.v2.bridge.PluginEventBridge;
 import com.eventui.core.v2.config.EventConfigLoader;
 import com.eventui.core.v2.storage.EventStorage;
+import com.eventui.core.v2.tracking.ObjectiveTracker;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Map;
 import java.util.logging.Logger;
 
-/**
- * Clase principal del plugin EventUI (Paper/Spigot).
- * ARQUITECTURA FASE 1:
- * - Carga eventos desde JSON
- * - Mantiene progreso en memoria
- * - Expone API para el MOD (vía EventBridge en siguiente paso)
- * - NO tiene comandos ni listeners todavía (solo infraestructura)
- */
 public class EventUIPlugin extends JavaPlugin {
 
     private static EventUIPlugin instance;
@@ -24,6 +17,7 @@ public class EventUIPlugin extends JavaPlugin {
 
     private EventConfigLoader configLoader;
     private EventStorage storage;
+    private PluginEventBridge eventBridge;
 
     @Override
     public void onEnable() {
@@ -44,23 +38,29 @@ public class EventUIPlugin extends JavaPlugin {
         // Paso 3: Cargar eventos desde JSON
         loadEvents();
 
-        // Paso 4: TODO - Inicializar EventBridge (próximo paso)
+        // Paso 4: Inicializar EventBridge
+        initializeBridge();
+
+        // Paso 5: Registrar tracker de objetivos
+        registerTrackers();
+
+        // Paso 6: Registrar comandos
+        registerCommands();
 
         LOGGER.info("EventUI v2 enabled successfully!");
         LOGGER.info("Loaded " + storage.getAllEventDefinitions().size() + " events");
-
-        registerCommands();
     }
 
     @Override
     public void onDisable() {
+        if (eventBridge != null) {
+            eventBridge.getNetworkHandler().unregister();
+        }
+
         LOGGER.info("EventUI v2 disabled");
         instance = null;
     }
 
-    /**
-     * Carga todos los eventos desde archivos JSON.
-     */
     private void loadEvents() {
         try {
             Map<String, EventDefinition> events = configLoader.loadAllEvents();
@@ -83,15 +83,25 @@ public class EventUIPlugin extends JavaPlugin {
         }
     }
 
-    /**
-     * Recarga los eventos desde disco.
-     */
+    private void initializeBridge() {
+        this.eventBridge = new PluginEventBridge(this);
+        LOGGER.info("EventBridge initialized");
+    }
+
+    private void registerTrackers() {
+        getServer().getPluginManager().registerEvents(new ObjectiveTracker(this), this);
+        LOGGER.info("Registered objective trackers");
+    }
+
+    private void registerCommands() {
+        getCommand("eventui").setExecutor(new com.eventui.core.v2.commands.EventCommand(this));
+        LOGGER.info("Registered commands");
+    }
+
     public void reloadEvents() {
         LOGGER.info("Reloading events...");
         loadEvents();
     }
-
-    // ========== Getters públicos ==========
 
     public static EventUIPlugin getInstance() {
         return instance;
@@ -104,9 +114,8 @@ public class EventUIPlugin extends JavaPlugin {
     public EventConfigLoader getConfigLoader() {
         return configLoader;
     }
-    private void registerCommands() {
-        getCommand("eventui").setExecutor(new EventCommand(this));
-        LOGGER.info("Registered commands");
-    }
 
+    public PluginEventBridge getEventBridge() {
+        return eventBridge;
+    }
 }

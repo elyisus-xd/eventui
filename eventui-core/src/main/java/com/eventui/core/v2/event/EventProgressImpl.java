@@ -34,10 +34,9 @@ public class EventProgressImpl implements EventProgress {
         this.completedAt = 0;
 
         // Inicializar progreso de objetivos
+        // Inicializar progreso de objetivos (SIN targetAmount, se registra después)
         this.objectivesProgress = new ConcurrentHashMap<>();
-        for (String objId : objectiveIds) {
-            this.objectivesProgress.put(objId, new ObjectiveProgressImpl(objId, 1)); // Placeholder
-        }
+        // NO crear ObjectiveProgressImpl aquí, esperar a que se registren con registerObjective()
     }
 
     @Override

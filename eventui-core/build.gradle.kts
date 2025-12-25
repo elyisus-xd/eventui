@@ -1,32 +1,23 @@
 plugins {
-    `java-library`
+    java
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
+
+group = "com.eventui"
+version = "2.0.0"
 
 repositories {
     mavenCentral()
-    maven("https://repo.papermc.io/repository/maven-public/")
+    maven {
+        url = uri("https://repo.papermc.io/repository/maven-public/")
+    }
 }
 
 dependencies {
-    // Dependencia al módulo common
-    api(project(":eventui-common"))
-
-    // Paper API (IMPORTANTE: debe ser compileOnly para plugins)
+    implementation(project(":eventui-common"))
     compileOnly("io.papermc.paper:paper-api:1.21.1-R0.1-SNAPSHOT")
-
-    // YAML parsing
     implementation("org.yaml:snakeyaml:2.2")
-
-    // JSON parsing
     implementation("com.google.code.gson:gson:2.10.1")
-
-    // Testing
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
-    testImplementation("org.assertj:assertj-core:3.24.2")
-}
-
-tasks.test {
-    useJUnitPlatform()
 }
 
 java {

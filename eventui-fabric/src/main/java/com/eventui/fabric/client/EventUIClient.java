@@ -1,43 +1,25 @@
 package com.eventui.fabric.client;
 
-import com.eventui.fabric.EventUIFabricMod;
-import com.eventui.fabric.ui.screen.MissionListScreen;
+import com.eventui.fabric.client.bridge.ClientEventBridge;
+import com.eventui.fabric.client.bridge.NetworkHandler;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.KeyMapping;
-import org.lwjgl.glfw.GLFW;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class EventUIClient implements ClientModInitializer {
-    private static KeyMapping openMissionsKey;
+
+    public static final Logger LOGGER = LoggerFactory.getLogger("EventUI-Client");
 
     @Override
     public void onInitializeClient() {
-        EventUIFabricMod.LOGGER.info("EventUI client initialized!");
+        LOGGER.info("Initializing EventUI client...");
 
-        // Registrar keybinding
-        registerKeyBindings();
+        // Registrar payload type
+        NetworkHandler.registerPayloadType();
 
-        // Registrar listener de teclas
-        registerKeyHandlers();
-    }
+        // Inicializar bridge
+        ClientEventBridge.getInstance();
 
-    private void registerKeyBindings() {
-        openMissionsKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
-                "key.eventui.open_missions",
-                GLFW.GLFW_KEY_M,
-                "category.eventui"
-        ));
-    }
-
-    private void registerKeyHandlers() {
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            // Verificar si se presionó la tecla
-            while (openMissionsKey.consumeClick()) {
-                if (client.player != null) {
-                    client.setScreen(new MissionListScreen());
-                }
-            }
-        });
+        LOGGER.info("EventUI client initialized!");
     }
 }

@@ -3,9 +3,11 @@ pluginManagement {
         maven {
             name = "Fabric"
             url = uri("https://maven.fabricmc.net/")
+
         }
         gradlePluginPortal()
         mavenCentral()
+        maven("https://repo.papermc.io/repository/maven-public/")
     }
 }
 
