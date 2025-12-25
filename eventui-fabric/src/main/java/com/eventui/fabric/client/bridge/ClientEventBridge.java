@@ -6,6 +6,7 @@ import com.eventui.api.bridge.MessageType;
 import com.eventui.api.event.EventDefinition;
 import com.eventui.api.event.EventProgress;
 import com.eventui.api.ui.UIConfig;
+import com.eventui.fabric.client.viewmodel.EventViewModel;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,7 @@ public class ClientEventBridge implements EventBridge {
     private final ClientEventCache cache;
     private final NetworkHandler network;
     private boolean connected;
+    private EventViewModel globalViewModel;
 
     public ClientEventBridge() {
         this.handlers = new ConcurrentHashMap<>();
@@ -47,6 +49,17 @@ public class ClientEventBridge implements EventBridge {
         }
         return instance;
     }
+
+    /**
+     * Obtiene o crea el ViewModel global.
+     */
+    public EventViewModel getOrCreateViewModel(UUID playerId) {
+        if (globalViewModel == null) {
+            globalViewModel = new EventViewModel(playerId);
+        }
+        return globalViewModel;
+    }
+
 
     @Override
     public CompletableFuture<Void> sendMessage(BridgeMessage message) {

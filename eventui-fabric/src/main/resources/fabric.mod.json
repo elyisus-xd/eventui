@@ -3,7 +3,7 @@
   "id": "eventui",
   "version": "${version}",
   "name": "EventUI",
-  "description": "Customizable mission and event UI system for Minecraft",
+  "description": "Customizable event UI system for Minecraft",
   "authors": [
     "elyisusxd"
   ],
@@ -15,9 +15,6 @@
   "environment": "*",
 
   "entrypoints": {
-    "main": [
-      "com.eventui.fabric.EventUIFabricMod"
-    ],
     "client": [
       "com.eventui.fabric.client.EventUIClient"
     ]

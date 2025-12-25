@@ -68,7 +68,8 @@ public class ObjectiveTracker implements Listener {
                                     eventDef.getId(),
                                     objective.getId(),
                                     objProgress.getCurrentAmount(),
-                                    objProgress.getTargetAmount()
+                                    objProgress.getTargetAmount(),
+                                    objective.getDescription()
                             );
 
                             if (completed) {
@@ -85,4 +86,5 @@ public class ObjectiveTracker implements Listener {
             });
         });
     }
+
 }

@@ -171,12 +171,14 @@ public class PluginEventBridge implements EventBridge {
     /**
      * Notifica progreso actualizado a un jugador (con nombres legibles).
      */
-    public void notifyProgressUpdate(UUID playerId, String eventId, String objectiveId, int current, int target) {
+    public void notifyProgressUpdate(UUID playerId, String eventId, String objectiveId, int current, int target, String description) {
+        String objectiveDescription;
         Map<String, String> payload = Map.of(
                 "event_id", eventId,
                 "objective_id", objectiveId,
                 "current", String.valueOf(current),
-                "target", String.valueOf(target)
+                "target", String.valueOf(target),
+                "description", description
         );
 
         BridgeMessage message = new PluginBridgeMessageMinimal(
