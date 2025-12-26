@@ -1,8 +1,7 @@
 package com.eventui.api.objective;
 
 /**
- * Tipos de objetivos soportados por EventUI.
- *
+ * Tipos de objetivos soportados por EventUI.*
  * ARQUITECTURA:
  * - Define QUÉ tipos de objetivos existen
  * - Cada tipo tiene su propia lógica de tracking (implementada en PLUGIN)

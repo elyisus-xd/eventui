@@ -1,8 +1,7 @@
 package com.eventui.api.objective;
 
 /**
- * Contrato que representa el PROGRESO de un objetivo para un jugador.
- *
+ * Contrato que representa el PROGRESO de un objetivo para un jugador.*
  * ARQUITECTURA:
  * - Separado de ObjectiveDefinition (definición vs estado)
  * - El PLUGIN actualiza estos valores según eventos del juego

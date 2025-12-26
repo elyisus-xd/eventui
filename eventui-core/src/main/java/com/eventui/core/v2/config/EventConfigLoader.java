@@ -6,6 +6,7 @@ import com.eventui.api.objective.ObjectiveType;
 import com.eventui.core.v2.event.EventDefinitionImpl;
 import com.eventui.core.v2.objective.ObjectiveDefinitionImpl;
 import com.google.gson.*;
+import com.google.gson.JsonSyntaxException;
 
 import java.io.File;
 import java.io.FileReader;
@@ -19,7 +20,6 @@ import java.util.logging.Logger;
 
 /**
  * Carga definiciones de eventos desde archivos JSON.
- *
  * ARQUITECTURA:
  * - Lee archivos de plugins/EventUI/events/*.json
  * - Parsea y valida el JSON
@@ -66,14 +66,46 @@ public class EventConfigLoader {
             try {
                 EventDefinition event = loadEventFromFile(file);
                 events.put(event.getId(), event);
-                LOGGER.info("Loaded event: " + event.getId() + " from " + file.getName());
+                LOGGER.info("✓ Loaded event: " + event.getId() + " from " + file.getName());
+            } catch (JsonSyntaxException e) {
+                // Error de sintaxis JSON (más común)
+                String errorMsg = e.getCause() != null ? e.getCause().getMessage() : e.getMessage();
+                LOGGER.severe("════════════════════════════════════════════════════════");
+                LOGGER.severe("❌ JSON SYNTAX ERROR in file: " + file.getName());
+                LOGGER.severe("Problem: " + errorMsg);
+                LOGGER.severe("Common fixes:");
+                LOGGER.severe("  - Check for missing commas between properties");
+                LOGGER.severe("  - Verify all quotes are closed properly");
+                LOGGER.severe("  - Use a JSON validator: https://jsonlint.com/");
+                LOGGER.severe("File location: " + file.getAbsolutePath());
+                LOGGER.severe("════════════════════════════════════════════════════════");
+            } catch (IOException e) {
+                // Error de archivo
+                LOGGER.severe("════════════════════════════════════════════════════════");
+                LOGGER.severe("❌ FILE READ ERROR: " + file.getName());
+                LOGGER.severe("Problem: " + e.getMessage());
+                LOGGER.severe("File location: " + file.getAbsolutePath());
+                LOGGER.severe("════════════════════════════════════════════════════════");
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Failed to load event from: " + file.getName(), e);
+                // Otros errores
+                LOGGER.severe("════════════════════════════════════════════════════════");
+                LOGGER.severe("❌ UNEXPECTED ERROR in file: " + file.getName());
+                LOGGER.severe("Problem: " + e.getMessage());
+                LOGGER.severe("File location: " + file.getAbsolutePath());
+                LOGGER.severe("════════════════════════════════════════════════════════");
+                e.printStackTrace(); // Solo para errores inesperados
             }
+        }
+
+        if (events.isEmpty()) {
+            LOGGER.warning("No events were loaded successfully. Check the errors above.");
+        } else {
+            LOGGER.info("Successfully loaded " + events.size() + " event(s)");
         }
 
         return events;
     }
+
 
     /**
      * Carga un evento desde un archivo específico.

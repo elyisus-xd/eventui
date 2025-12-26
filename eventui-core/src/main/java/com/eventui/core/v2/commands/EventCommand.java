@@ -10,6 +10,8 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import java.util.Optional;
+import java.util.UUID;
+import java.util.logging.Logger;
 
 /**
  * Comando de testing para la FASE 1.
@@ -21,6 +23,9 @@ import java.util.Optional;
  * - /eventui reload - Recarga eventos desde JSON
  */
 public class EventCommand implements CommandExecutor {
+
+    private static final Logger LOGGER = Logger.getLogger(EventCommand.class.getName());
+
 
     private final EventUIPlugin plugin;
 
@@ -170,12 +175,49 @@ public class EventCommand implements CommandExecutor {
             // Iniciar el evento
             EventProgressImpl progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
             progress.start();
+
             sender.sendMessage("§aStarted event: " + eventDef.getDisplayName());
+
+            // ✅ NUEVO: Notificar cambio de estado al cliente
+            notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.IN_PROGRESS);
+
+            // ✅ NUEVO: Notificar progreso inicial (0/target) para que se muestre en la UI
+            if (!eventDef.getObjectives().isEmpty()) {
+                var firstObjective = eventDef.getObjectives().get(0);
+                plugin.getEventBridge().notifyProgressUpdate(
+                        player.getUniqueId(),
+                        eventId,
+                        firstObjective.getId(),
+                        0,
+                        firstObjective.getTargetAmount(),
+                        firstObjective.getDescription()
+                );
+            }
 
         } catch (Exception e) {
             sender.sendMessage("§cFailed to start event: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * ✅ NUEVO: Notifica cambio de estado al cliente.
+     */
+    private void notifyStateChange(UUID playerId, String eventId, com.eventui.api.event.EventState newState) {
+        java.util.Map<String, String> payload = java.util.Map.of(
+                "event_id", eventId,
+                "new_state", newState.name()
+        );
+
+        com.eventui.api.bridge.BridgeMessage message = new com.eventui.core.v2.bridge.PluginBridgeMessage(
+                com.eventui.api.bridge.MessageType.EVENT_STATE_CHANGED,
+                payload,
+                playerId
+        );
+
+        plugin.getEventBridge().sendMessage(message);
+
+        LOGGER.info("Notified state change to client: event={}, newState={}");
     }
 
     private void handleReload(CommandSender sender) {
@@ -187,4 +229,5 @@ public class EventCommand implements CommandExecutor {
         plugin.reloadEvents();
         sender.sendMessage("§aEvents reloaded successfully!");
     }
+
 }

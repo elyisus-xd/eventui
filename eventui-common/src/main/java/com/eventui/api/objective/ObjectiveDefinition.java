@@ -3,8 +3,7 @@ package com.eventui.api.objective;
 import java.util.Map;
 
 /**
- * Contrato que define QUÉ ES un objetivo dentro de un evento.
- *
+ * Contrato que define QUÉ ES un objetivo dentro de un evento.*
  * ARQUITECTURA:
  * - Define estructura, NO implementa tracking
  * - El PLUGIN lee esta definición del JSON
@@ -36,8 +35,7 @@ public interface ObjectiveDefinition {
     int getTargetAmount();
 
     /**
-     * Configuración específica del tipo de objetivo
-     *
+     * Configuración específica del tipo de objetivo*
      * Ejemplos según tipo:
      * - MINE_BLOCK: {"block_id": "minecraft:diamond_ore"}
      * - KILL_ENTITY: {"entity_type": "minecraft:zombie", "min_distance": "50"}
@@ -48,8 +46,7 @@ public interface ObjectiveDefinition {
     Map<String, String> getParameters();
 
     /**
-     * Recursos UI para este objetivo (opcional)
-     *
+     * Recursos UI para este objetivo (opcional)*
      * Ejemplo: {"icon": "textures/objectives/diamond.png"}
      *
      * @return Mapa inmutable de recursos

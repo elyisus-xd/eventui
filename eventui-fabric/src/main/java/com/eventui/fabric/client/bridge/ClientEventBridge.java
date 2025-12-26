@@ -38,9 +38,11 @@ public class ClientEventBridge implements EventBridge {
         this.handlers = new ConcurrentHashMap<>();
         this.cache = new ClientEventCache();
         this.network = new NetworkHandler(this);
-        this.connected = false;
+        this.connected = true;
 
         registerDefaultHandlers();
+
+        LOGGER.info("ClientEventBridge initialized and connected");
     }
 
     public static ClientEventBridge getInstance() {
@@ -63,15 +65,11 @@ public class ClientEventBridge implements EventBridge {
 
     @Override
     public CompletableFuture<Void> sendMessage(BridgeMessage message) {
-        if (!connected) {
-            LOGGER.warn("Bridge not connected, cannot send message: {}", message.getType());
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("Bridge not connected")
-            );
-        }
-
+        // ✅ SIN VALIDACIÓN DE CONEXIÓN
+        LOGGER.debug("Sending message type: {}", message.getType());
         return network.sendMessage(message);
     }
+
 
     @Override
     public void registerMessageHandler(MessageType type, MessageHandler handler) {

@@ -5,8 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Contrato que define QUÉ ES un evento.
- *
+ * Contrato que define QUÉ ES un evento.*
  * ARQUITECTURA:
  * - Define estructura, NO comportamiento
  * - NO contiene progreso ni estado (eso va en EventProgress)
@@ -36,8 +35,7 @@ public interface EventDefinition {
     List<ObjectiveDefinition> getObjectives();
 
     /**
-     * Recursos UI asociados a este evento (paths de imágenes, etc.)
-     *
+     * Recursos UI asociados a este evento (paths de imágenes, etc.)*
      * Ejemplos de keys:
      * - "icon": "textures/events/mining_icon.png"
      * - "background": "textures/events/mining_bg.png"
@@ -48,8 +46,7 @@ public interface EventDefinition {
     Map<String, String> getUIResources();
 
     /**
-     * Metadata adicional configurable desde JSON
-     *
+     * Metadata adicional configurable desde JSON*
      * Ejemplos:
      * - "category": "tutorial"
      * - "required_level": "5"

@@ -9,8 +9,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Implementación mutable de EventProgress.
- *
+ * Implementación mutable de EventProgress.*
  * ARQUITECTURA:
  * - Gestiona el progreso de un evento para UN jugador
  * - Thread-safe para servidores multijugador

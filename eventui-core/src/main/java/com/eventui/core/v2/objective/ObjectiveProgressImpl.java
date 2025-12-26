@@ -3,8 +3,7 @@ package com.eventui.core.v2.objective;
 import com.eventui.api.objective.ObjectiveProgress;
 
 /**
- * Implementación mutable de ObjectiveProgress.
- *
+ * Implementación mutable de ObjectiveProgress.*
  * ARQUITECTURA:
  * - Esta clase SÍ es mutable (el progreso cambia)
  * - El PLUGIN gestiona instancias de esta clase

@@ -8,10 +8,12 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Pantalla principal de eventos usando la nueva arquitectura.
+ * Muestra múltiples eventos apilados verticalmente.
  */
 public class EventScreen extends Screen {
 
@@ -27,11 +29,19 @@ public class EventScreen extends Screen {
             this.viewModel = ClientEventBridge.getInstance().getOrCreateViewModel(player.getUUID());
             this.events = viewModel.getAllEvents(); // Obtener eventos actuales
 
+            // DEBUG: Imprimir cantidad de eventos
+            System.out.println("[EventScreen] Constructor - Eventos cargados: " + events.size());
+            for (int i = 0; i < events.size(); i++) {
+                EventViewModel.EventData event = events.get(i);
+                System.out.println("  [" + i + "] " + event.displayName + " - Estado: " + event.state);
+            }
+
             // Suscribirse a cambios
             viewModel.addChangeListener(this::onEventsUpdated);
 
             // Si está vacío, solicitar eventos
             if (this.events.isEmpty()) {
+                System.out.println("[EventScreen] Lista vacía, solicitando eventos...");
                 viewModel.requestEvents();
             }
         } else {
@@ -56,7 +66,12 @@ public class EventScreen extends Screen {
      */
     private void onEventsUpdated(List<EventViewModel.EventData> newEvents) {
         Minecraft.getInstance().execute(() -> {
+            System.out.println("[EventScreen] onEventsUpdated - Nuevos eventos: " + newEvents.size());
             this.events = newEvents;
+            for (int i = 0; i < events.size(); i++) {
+                EventViewModel.EventData event = events.get(i);
+                System.out.println("  [" + i + "] " + event.displayName + " - Estado: " + event.state);
+            }
         });
     }
 
@@ -67,10 +82,10 @@ public class EventScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        // 1. BLUR DEL MUNDO (una sola vez al inicio)
+        // 1. BLUR DEL MUNDO
         super.renderBackground(graphics, mouseX, mouseY, partialTick);
 
-        // 2. FONDO SEMI-TRANSPARENTE (opcional)
+        // 2. FONDO SEMI-TRANSPARENTE
         graphics.fill(0, 0, this.width, this.height, 0x80000000);
 
         // 3. TÍTULO
@@ -82,9 +97,19 @@ public class EventScreen extends Screen {
                 0xFFFFFF
         );
 
-        int yOffset = 50;
+        // DEBUG: Mostrar cantidad de eventos
+        String debugInfo = String.format("§7Total events: %d", events.size());
+        graphics.drawCenteredString(
+                this.font,
+                debugInfo,
+                this.width / 2,
+                35,
+                0xFFFFFF
+        );
 
-        // 4. CONTENIDO
+        int yOffset = 55;
+
+        // 4. ORGANIZAR EVENTOS POR ESTADO
         if (events.isEmpty()) {
             graphics.drawCenteredString(
                     this.font,
@@ -94,15 +119,97 @@ public class EventScreen extends Screen {
                     0xFFFFFF
             );
         } else {
-            // Renderizar cada evento
+            // Separar eventos por estado
+            List<EventViewModel.EventData> inProgress = new ArrayList<>();
+            List<EventViewModel.EventData> available = new ArrayList<>();
+            List<EventViewModel.EventData> completed = new ArrayList<>();
+            List<EventViewModel.EventData> locked = new ArrayList<>();
+
             for (EventViewModel.EventData event : events) {
-                yOffset = renderEvent(graphics, event, yOffset);
+                switch (event.state) {
+                    case IN_PROGRESS -> inProgress.add(event);
+                    case AVAILABLE -> available.add(event);
+                    case COMPLETED -> completed.add(event);
+                    case LOCKED -> locked.add(event);
+                }
+            }
+
+            // SECCIÓN: EN PROGRESO
+            if (!inProgress.isEmpty()) {
+                graphics.drawString(
+                        this.font,
+                        "§e§lIN PROGRESS",
+                        45,
+                        yOffset,
+                        0xFFFFFF
+                );
+                yOffset += 15;
+
+                for (EventViewModel.EventData event : inProgress) {
+                    yOffset = renderEvent(graphics, event, yOffset);
+                    yOffset += 10;
+                }
+                yOffset += 10; // Espacio extra entre secciones
+            }
+
+            // SECCIÓN: DISPONIBLES
+            if (!available.isEmpty()) {
+                graphics.drawString(
+                        this.font,
+                        "§f§lAVAILABLE",
+                        45,
+                        yOffset,
+                        0xFFFFFF
+                );
+                yOffset += 15;
+
+                for (EventViewModel.EventData event : available) {
+                    yOffset = renderEvent(graphics, event, yOffset);
+                    yOffset += 10;
+                }
+                yOffset += 10;
+            }
+
+            // SECCIÓN: COMPLETADOS
+            if (!completed.isEmpty()) {
+                graphics.drawString(
+                        this.font,
+                        "§a§lCOMPLETED",
+                        45,
+                        yOffset,
+                        0xFFFFFF
+                );
+                yOffset += 15;
+
+                for (EventViewModel.EventData event : completed) {
+                    yOffset = renderEvent(graphics, event, yOffset);
+                    yOffset += 10;
+                }
+                yOffset += 10;
+            }
+
+            // SECCIÓN: BLOQUEADOS
+            if (!locked.isEmpty()) {
+                graphics.drawString(
+                        this.font,
+                        "§8§lLOCKED",
+                        45,
+                        yOffset,
+                        0xFFFFFF
+                );
+                yOffset += 15;
+
+                for (EventViewModel.EventData event : locked) {
+                    yOffset = renderEvent(graphics, event, yOffset);
+                    yOffset += 10;
+                }
             }
         }
 
-        // 5. BOTONES AL FINAL
+        // 5. BOTONES
         super.render(graphics, mouseX, mouseY, partialTick);
     }
+
 
     /**
      * Renderiza un evento individual.
@@ -111,8 +218,17 @@ public class EventScreen extends Screen {
         int leftMargin = 40;
         int rightMargin = this.width - 40;
 
+        // Calcular altura dinámica del evento
+        int eventHeight = 60; // Altura base
+        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
+            eventHeight += 24; // Espacio extra para progreso
+            if (event.currentObjectiveDescription != null) {
+                eventHeight += 12; // Espacio extra para descripción de objetivo
+            }
+        }
+
         // Fondo del evento (caja con borde)
-        graphics.fill(leftMargin - 5, y - 5, rightMargin, y + 60, 0xDD222222);
+        graphics.fill(leftMargin - 5, y - 5, rightMargin, y + eventHeight, 0xDD222222);
         graphics.fill(leftMargin - 5, y - 5, rightMargin, y - 4, 0xFFFFAA00); // Borde superior
 
         // Color según estado
@@ -144,8 +260,10 @@ public class EventScreen extends Screen {
         );
         y += 12;
 
-        // NUEVO: Descripción del objetivo actual
-        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS && event.currentObjectiveDescription != null) {
+// ✅ ACTUALIZADO: Mostrar descripción del objetivo en AVAILABLE e IN_PROGRESS
+        if (event.currentObjectiveDescription != null &&
+                (event.state == com.eventui.api.event.EventState.AVAILABLE ||
+                        event.state == com.eventui.api.event.EventState.IN_PROGRESS)) {
             graphics.drawString(
                     this.font,
                     "§e→ " + event.currentObjectiveDescription,
@@ -156,7 +274,7 @@ public class EventScreen extends Screen {
             y += 12;
         }
 
-        // Progreso
+// Progreso (solo si está IN_PROGRESS)
         if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
             String progressText = String.format("§6Progress: %d/%d (%.0f%%)",
                     event.currentProgress,
@@ -187,7 +305,7 @@ public class EventScreen extends Screen {
             y += 12;
         }
 
-        y += 20; // Espaciado entre eventos
+        y += 15; // Espaciado entre eventos
         return y;
     }
 
@@ -218,7 +336,6 @@ public class EventScreen extends Screen {
         }
         super.onClose();
     }
-
 
     @Override
     public boolean isPauseScreen() {

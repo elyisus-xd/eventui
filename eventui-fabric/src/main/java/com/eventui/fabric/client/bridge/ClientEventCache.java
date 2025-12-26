@@ -12,8 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Caché local de eventos y progreso en el cliente.
- *
+ * Caché local de eventos y progreso en el cliente.*
  * ARQUITECTURA:
  * - Reduce requests al servidor
  * - Mantiene datos sincronizados

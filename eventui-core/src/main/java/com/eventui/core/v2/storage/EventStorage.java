@@ -11,13 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 /**
- * Almacenamiento en memoria de eventos y progreso.
- *
+ * Almacenamiento en memoria de eventos y progreso.*
  * ARQUITECTURA FASE 1:
  * - TODO en memoria (se pierde al reiniciar)
  * - Sin persistencia a disco/base de datos
- * - Thread-safe para servidores
- *
+ * - Thread-safe para servidores*
  * FASE 2+ agregará persistencia real.
  */
 public class EventStorage {

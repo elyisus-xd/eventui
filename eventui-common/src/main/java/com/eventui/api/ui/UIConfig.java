@@ -3,8 +3,7 @@ package com.eventui.api.ui;
 import java.util.List;
 
 /**
- * Contrato que define la configuración completa de una pantalla UI.
- *
+ * Contrato que define la configuración completa de una pantalla UI.*
  * ARQUITECTURA:
  * - Representa una pantalla completa (ej: pantalla de evento único)
  * - Se carga desde JSON en el PLUGIN
@@ -54,8 +53,7 @@ public interface UIConfig {
     String getAssociatedEventId();
 
     /**
-     * Configuración adicional de la pantalla
-     *
+     * Configuración adicional de la pantalla*
      * Ejemplos:
      * - "background_color": "#2C2C2C"
      * - "pause_game": "false"

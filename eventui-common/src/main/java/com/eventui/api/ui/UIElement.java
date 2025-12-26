@@ -44,8 +44,7 @@ public interface UIElement {
     int getHeight();
 
     /**
-     * Propiedades específicas según el tipo de elemento
-     *
+     * Propiedades específicas según el tipo de elemento*
      * Ejemplos:
      * - IMAGE: {"texture": "textures/ui/background.png", "uv_x": "0", "uv_y": "0"}
      * - BUTTON: {"texture": "textures/ui/button.png", "hover_texture": "textures/ui/button_hover.png", "action": "close_screen"}

@@ -5,13 +5,14 @@ import com.eventui.api.bridge.EventBridge;
 import com.eventui.api.bridge.MessageType;
 import com.eventui.api.event.EventDefinition;
 import com.eventui.api.event.EventProgress;
+import com.eventui.api.event.EventState;
+import com.eventui.api.objective.ObjectiveDefinition;
+import com.eventui.api.objective.ObjectiveProgress;
 import com.eventui.api.ui.UIConfig;
 import com.eventui.core.v2.EventUIPlugin;
 import org.bukkit.entity.Player;
 
-import java.util.Collections;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -93,29 +94,18 @@ public class PluginEventBridge implements EventBridge {
     }
 
     private void registerDefaultHandlers() {
+        // NUEVO: Handler para REQUEST_EVENT_DATA que envía TODOS los eventos
         registerMessageHandler(MessageType.REQUEST_EVENT_DATA, message -> {
-            String eventId = message.getPayload().get("event_id");
+            UUID playerId = message.getPlayerId();
 
-            plugin.getStorage().getEventDefinition(eventId).ifPresentOrElse(
-                    event -> {
-                        Map<String, String> payload = Map.of(
-                                "event_id", event.getId(),
-                                "display_name", event.getDisplayName(),
-                                "description", event.getDescription(),
-                                "objectives_count", String.valueOf(event.getObjectives().size())
-                        );
+            // Buscar el jugador
+            Player player = plugin.getServer().getPlayer(playerId);
+            if (player == null) {
+                LOGGER.warning("Player not found for REQUEST_EVENT_DATA: " + playerId);
+                return;
+            }
 
-                        BridgeMessage response = new PluginBridgeMessage(
-                                MessageType.EVENT_DATA_RESPONSE,
-                                payload,
-                                message.getPlayerId(),
-                                message.getMessageId()
-                        );
-
-                        sendMessage(response);
-                    },
-                    () -> LOGGER.warning("Event not found: " + eventId)
-            );
+            handleRequestEventData(player, message);
         });
 
         registerMessageHandler(MessageType.REQUEST_EVENT_PROGRESS, message -> {
@@ -152,6 +142,95 @@ public class PluginEventBridge implements EventBridge {
         });
     }
 
+    /**
+     * NUEVO MÉTODO: Envía TODOS los eventos al cliente, organizados por estado.
+     */
+    private void handleRequestEventData(Player player, BridgeMessage message) {
+        UUID playerId = player.getUniqueId();
+
+        List<EventDefinition> events = plugin.getStorage().getAllEventDefinitions()
+                .values()
+                .stream()
+                .toList();
+
+        List<Map<String, Object>> eventsList = new ArrayList<>();
+
+        for (EventDefinition eventDef : events) {
+            Map<String, Object> eventData = new HashMap<>();
+
+            eventData.put("id", eventDef.getId());
+            eventData.put("displayName", eventDef.getDisplayName());
+            eventData.put("description", eventDef.getDescription());
+
+            var progressOpt = plugin.getStorage().getProgress(playerId, eventDef.getId());
+
+            if (progressOpt.isPresent()) {
+                EventProgress progress = progressOpt.get();
+
+                eventData.put("state", progress.getState().name());
+                eventData.put("overallProgress", String.valueOf(progress.getOverallProgress()));
+                eventData.put("startedAt", String.valueOf(progress.getStartedAt()));
+
+                if (progress.getState() == EventState.IN_PROGRESS) {
+                    for (ObjectiveDefinition objDef : eventDef.getObjectives()) {
+                        ObjectiveProgress objProgress = progress.getObjectivesProgress().stream()
+                                .filter(op -> op.getObjectiveId().equals(objDef.getId()))
+                                .findFirst()
+                                .orElse(null);
+
+                        if (objProgress != null && !objProgress.isCompleted()) {
+                            eventData.put("currentObjective", objDef.getDescription());
+                            eventData.put("currentProgress", objProgress.getCurrentAmount());
+                            eventData.put("targetProgress", objProgress.getTargetAmount());
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Evento AVAILABLE - Enviar info del primer objetivo
+                eventData.put("state", EventState.AVAILABLE.name());
+                eventData.put("overallProgress", "0.0");
+                eventData.put("startedAt", "0");
+
+                // ✅ NUEVO: Agregar descripción del primer objetivo
+                if (!eventDef.getObjectives().isEmpty()) {
+                    ObjectiveDefinition firstObjective = eventDef.getObjectives().get(0);
+                    eventData.put("currentObjective", firstObjective.getDescription());
+                    eventData.put("currentProgress", 0);
+                    eventData.put("targetProgress", firstObjective.getTargetAmount());
+                }
+            }
+
+            eventsList.add(eventData);
+        }
+
+        try {
+            String jsonData = new com.google.gson.Gson().toJson(eventsList);
+
+            Map<String, String> payload = Map.of(
+                    "events", jsonData,
+                    "count", String.valueOf(eventsList.size())
+            );
+
+            BridgeMessage response = new PluginBridgeMessage(
+                    MessageType.EVENT_DATA_RESPONSE,
+                    payload,
+                    playerId,
+                    message.getMessageId()
+            );
+
+            sendMessage(response);
+
+            LOGGER.info("Sent " + eventsList.size() + " events to player " + player.getName());
+
+        } catch (Exception e) {
+            LOGGER.severe("Failed to serialize events: " + e.getMessage());
+            e.printStackTrace();
+            sendErrorResponse(message, "Failed to load events", player);
+        }
+    }
+
+
     private void sendErrorResponse(BridgeMessage originalMessage, String errorMessage, Player player) {
         Map<String, String> payload = Map.of(
                 "error_code", "PROCESSING_ERROR",
@@ -172,7 +251,6 @@ public class PluginEventBridge implements EventBridge {
      * Notifica progreso actualizado a un jugador (con nombres legibles).
      */
     public void notifyProgressUpdate(UUID playerId, String eventId, String objectiveId, int current, int target, String description) {
-        String objectiveDescription;
         Map<String, String> payload = Map.of(
                 "event_id", eventId,
                 "objective_id", objectiveId,
