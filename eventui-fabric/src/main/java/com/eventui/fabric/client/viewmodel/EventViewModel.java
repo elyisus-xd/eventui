@@ -67,7 +67,7 @@ public class EventViewModel {
             }
         });
 
-        // ✅ NUEVO: Escuchar cambios de estado
+// Escuchar cambios de estado
         bridge.registerMessageHandler(MessageType.EVENT_STATE_CHANGED, message -> {
             String eventId = message.getPayload().get("event_id");
             String newStateStr = message.getPayload().get("new_state");
@@ -78,7 +78,14 @@ public class EventViewModel {
                 LOGGER.info("Received state change: event={}, newState={}", eventId, newState);
 
                 updateStateInCache(eventId, newState);
-                notifyListeners();
+
+                // ✅ NUEVO: Si es COMPLETED, solicitar datos frescos del servidor
+                if (newState == EventState.COMPLETED || newState == EventState.AVAILABLE) {
+                    LOGGER.info("Requesting fresh data after state change to {}", newState);
+                    requestEvents(); // Recargar todos los eventos
+                } else {
+                    notifyListeners();
+                }
             }
         });
 

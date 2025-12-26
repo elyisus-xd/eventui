@@ -117,4 +117,16 @@ public class EventStorage {
         playerProgress.remove(playerId);
         LOGGER.info("Cleared progress for player: " + playerId);
     }
+
+    /**
+     * Elimina el progreso de un evento específico para un jugador.
+     */
+    public void removeProgress(UUID playerId, String eventId) {
+        Map<String, EventProgressImpl> playerEvents = playerProgress.get(playerId);
+        if (playerEvents != null) {
+            playerEvents.remove(eventId);
+            LOGGER.info("Removed progress for player " + playerId + ", event: " + eventId);
+        }
+    }
+
 }

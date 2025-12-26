@@ -22,6 +22,9 @@ public class ClientEventCache {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClientEventCache.class);
 
+    // Caché de UI configs
+    private final Map<String, String> uiConfigs;
+
     // Caché de definiciones de eventos
     private final Map<String, EventDefinition> eventDefinitions;
 
@@ -35,6 +38,22 @@ public class ClientEventCache {
         this.eventDefinitions = new ConcurrentHashMap<>();
         this.eventProgress = new ConcurrentHashMap<>();
         this.pendingRequests = new ConcurrentHashMap<>();
+        this.uiConfigs = new ConcurrentHashMap<>(); // ✅ NUEVO
+    }
+
+    /**
+     * FASE 4A: Cachea una UI config.
+     */
+    public void cacheUIConfig(String uiId, String uiDataJson) {
+        uiConfigs.put(uiId, uiDataJson);
+        LOGGER.info("Cached UI config: {}", uiId);
+    }
+
+    /**
+     * FASE 4A: Obtiene UI config del caché.
+     */
+    public String getCachedUIConfig(String uiId) {
+        return uiConfigs.get(uiId);
     }
 
     /**

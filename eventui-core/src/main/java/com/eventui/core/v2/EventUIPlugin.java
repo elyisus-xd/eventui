@@ -1,8 +1,11 @@
 package com.eventui.core.v2;
 
 import com.eventui.api.event.EventDefinition;
+import com.eventui.api.ui.UIConfig;
 import com.eventui.core.v2.bridge.PluginEventBridge;
+import com.eventui.core.v2.commands.EventCommand;
 import com.eventui.core.v2.config.EventConfigLoader;
+import com.eventui.core.v2.config.UIConfigLoader;
 import com.eventui.core.v2.storage.EventStorage;
 import com.eventui.core.v2.tracking.ObjectiveTracker;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -18,6 +21,8 @@ public class EventUIPlugin extends JavaPlugin {
     private EventConfigLoader configLoader;
     private EventStorage storage;
     private PluginEventBridge eventBridge;
+    private UIConfigLoader uiConfigLoader;
+    private Map<String, UIConfig> uiConfigs;
 
     @Override
     public void onEnable() {
@@ -30,6 +35,11 @@ public class EventUIPlugin extends JavaPlugin {
         // Paso 1: Inicializar loader de configuración
         this.configLoader = new EventConfigLoader(getDataFolder());
         LOGGER.info("Initialized configuration loader");
+
+        // ✅ NUEVO: Paso 1.5 - Inicializar loader de UIs
+        this.uiConfigLoader = new com.eventui.core.v2.config.UIConfigLoader(getDataFolder());
+        this.uiConfigs = uiConfigLoader.loadAllUIConfigs();
+        LOGGER.info("✓ Loaded " + uiConfigs.size() + " UI config(s)");
 
         // Paso 2: Inicializar storage
         this.storage = new EventStorage();
@@ -94,13 +104,30 @@ public class EventUIPlugin extends JavaPlugin {
     }
 
     private void registerCommands() {
-        getCommand("eventui").setExecutor(new com.eventui.core.v2.commands.EventCommand(this));
-        LOGGER.info("Registered commands");
+        var command = getCommand("eventui");
+        if (command != null) {
+            EventCommand executor = new com.eventui.core.v2.commands.EventCommand(this);
+            command.setExecutor(executor);
+            command.setTabCompleter(new com.eventui.core.v2.commands.EventCommandTabCompleter(this));
+            LOGGER.info("Registered commands with tab completion");
+        } else {
+            LOGGER.warning("Failed to register eventui command - command not found in plugin.yml!");
+        }
     }
+
+
 
     public void reloadEvents() {
         LOGGER.info("Reloading events...");
         loadEvents();
+    }
+    // ✅ NUEVO: Getter para UI configs
+    public Map<String, UIConfig> getUIConfigs() {
+        return uiConfigs;
+    }
+
+    public UIConfigLoader getUIConfigLoader() {
+        return uiConfigLoader;
     }
 
     public static EventUIPlugin getInstance() {

@@ -8,6 +8,7 @@ import com.eventui.api.event.EventProgress;
 import com.eventui.api.ui.UIConfig;
 import com.eventui.fabric.client.viewmodel.EventViewModel;
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.player.Player;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -184,9 +185,19 @@ public class ClientEventBridge implements EventBridge {
      * Registra handlers por defecto para respuestas del servidor.
      */
     private void registerDefaultHandlers() {
+        // ✅ NUEVO: Handler para UI_CONFIG_RESPONSE
+        registerMessageHandler(MessageType.UI_CONFIG_RESPONSE, message -> {
+            String uiId = message.getPayload().get("ui_id");
+            String uiDataJson = message.getPayload().get("ui_data");
+
+            LOGGER.info("Received UI_CONFIG_RESPONSE for: {}", uiId);
+
+            // Guardar en caché para uso posterior
+            cache.cacheUIConfig(uiId, uiDataJson);
+        });
+
         // Handler para respuestas de datos de eventos
         registerMessageHandler(MessageType.EVENT_DATA_RESPONSE, message -> {
-            // TODO: Deserializar EventDefinition del payload
             cache.handleEventDataResponse(message);
         });
 
@@ -198,7 +209,6 @@ public class ClientEventBridge implements EventBridge {
         // Handler para actualizaciones de progreso en tiempo real
         registerMessageHandler(MessageType.PROGRESS_UPDATE, message -> {
             LOGGER.info("Progress update received: {}", message.getPayload());
-            // Notificar a la UI que el progreso cambió
             cache.invalidateProgress(message.getPayload().get("event_id"));
         });
 
@@ -208,6 +218,7 @@ public class ClientEventBridge implements EventBridge {
             cache.invalidateEvent(message.getPayload().get("event_id"));
         });
     }
+
 
     /**
      * Obtiene el UUID del jugador local.

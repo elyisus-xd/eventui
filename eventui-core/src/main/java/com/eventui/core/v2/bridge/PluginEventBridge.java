@@ -106,7 +106,11 @@ public class PluginEventBridge implements EventBridge {
             }
 
             handleRequestEventData(player, message);
+
+
         });
+
+
 
         registerMessageHandler(MessageType.REQUEST_EVENT_PROGRESS, message -> {
             String eventId = message.getPayload().get("event_id");
@@ -140,7 +144,23 @@ public class PluginEventBridge implements EventBridge {
 
             LOGGER.info("Button clicked: " + buttonId + " on event " + eventId);
         });
+        // ✅ NUEVO FASE 4A: Handler para REQUEST_UI_CONFIG
+        registerMessageHandler(MessageType.REQUEST_UI_CONFIG, message -> {
+            UUID playerId = message.getPlayerId();
+            Player player = plugin.getServer().getPlayer(playerId);
+
+            if (player == null) {
+                LOGGER.warning("Player not found for REQUEST_UI_CONFIG: " + playerId);
+                return;
+            }
+
+            handleRequestUIConfig(player, message);
+        });
+
+
+
     }
+
 
     /**
      * NUEVO MÉTODO: Envía TODOS los eventos al cliente, organizados por estado.
@@ -316,4 +336,94 @@ public class PluginEventBridge implements EventBridge {
             return null;
         }
     }
+
+    /**
+     * FASE 4A: Envía la configuración de UI al cliente.
+     */
+    private void handleRequestUIConfig(Player player, BridgeMessage message) {
+        String uiId = message.getPayload().get("ui_id");
+
+        if (uiId == null || uiId.isEmpty()) {
+            // Si no especifica, enviar la UI por defecto
+            uiId = "default_event_list";
+        }
+
+        UIConfig uiConfig = plugin.getUIConfigs().get(uiId);
+
+        if (uiConfig == null) {
+            LOGGER.warning("UI config not found: " + uiId);
+            sendErrorResponse(message, "UI not found: " + uiId, player);
+            return;
+        }
+
+        try {
+            // Serializar UIConfig a JSON para enviar
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+
+            Map<String, Object> uiData = new HashMap<>();
+            uiData.put("id", uiConfig.getId());
+            uiData.put("title", uiConfig.getTitle());
+            uiData.put("screen_width", uiConfig.getScreenWidth());
+            uiData.put("screen_height", uiConfig.getScreenHeight());
+            uiData.put("associated_event_id", uiConfig.getAssociatedEventId());
+            uiData.put("screen_properties", uiConfig.getScreenProperties());
+
+            // Serializar elementos
+            List<Map<String, Object>> elementsData = new ArrayList<>();
+            for (com.eventui.api.ui.UIElement element : uiConfig.getRootElements()) {
+                elementsData.add(serializeUIElement(element));
+            }
+            uiData.put("elements", elementsData);
+
+            String jsonData = gson.toJson(uiData);
+
+            Map<String, String> payload = Map.of(
+                    "ui_id", uiConfig.getId(),
+                    "ui_data", jsonData
+            );
+
+            BridgeMessage response = new PluginBridgeMessage(
+                    MessageType.UI_CONFIG_RESPONSE,
+                    payload,
+                    player.getUniqueId(),
+                    message.getMessageId()
+            );
+
+            sendMessage(response);
+
+            LOGGER.info("Sent UI config: " + uiId + " to player " + player.getName());
+
+        } catch (Exception e) {
+            LOGGER.severe("Failed to serialize UI config: " + e.getMessage());
+            e.printStackTrace();
+            sendErrorResponse(message, "Failed to load UI", player);
+        }
+    }
+
+    /**
+     * Serializa un UIElement a Map.
+     */
+    private Map<String, Object> serializeUIElement(com.eventui.api.ui.UIElement element) {
+        Map<String, Object> data = new HashMap<>();
+
+        data.put("id", element.getId());
+        data.put("type", element.getType().name());
+        data.put("x", element.getX());
+        data.put("y", element.getY());
+        data.put("width", element.getWidth());
+        data.put("height", element.getHeight());
+        data.put("properties", element.getProperties());
+        data.put("visible", element.isVisible());
+        data.put("z_index", element.getZIndex());
+
+        // Serializar children recursivamente
+        List<Map<String, Object>> childrenData = new ArrayList<>();
+        for (com.eventui.api.ui.UIElement child : element.getChildren()) {
+            childrenData.add(serializeUIElement(child));
+        }
+        data.put("children", childrenData);
+
+        return data;
+    }
+
 }

@@ -9,9 +9,17 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import com.mojang.brigadier.context.CommandContext;
+
 import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Logger;
+import java.util.concurrent.CompletableFuture;
+import java.util.Collection;
 
 /**
  * Comando de testing para la FASE 1.
@@ -37,27 +45,38 @@ public class EventCommand implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
             sender.sendMessage("§6EventUI v2 Commands:");
-            sender.sendMessage("§e/eventui list §7- List all events");
-            sender.sendMessage("§e/eventui info <id> §7- Show event info");
-            sender.sendMessage("§e/eventui progress <id> §7- Show your progress");
-            sender.sendMessage("§e/eventui start <id> §7- Start an event");
-            sender.sendMessage("§e/eventui reload §7- Reload events");
+            sender.sendMessage("§e/ev list §7- List all events");
+            sender.sendMessage("§e/ev info <id> §7- Show event info");
+            sender.sendMessage("§e/ev progress <id> §7- Show your progress");
+            sender.sendMessage("§e/ev start <id> §7- Start an event");
+            sender.sendMessage("§e/ev reload §7- Reload all events");
+            sender.sendMessage("§6§lTesting Commands:");
+            sender.sendMessage("§e/ev reset <id|all> §7- Reset progress");
+            sender.sendMessage("§e/ev complete <id> §7- Instant complete");
+            sender.sendMessage("§e/ev debug <id> §7- Show debug info");
+            sender.sendMessage("§e/ev setprogress <event> <obj> <amount> §7- Set progress");
+            sender.sendMessage("§e/ev reloadevent <id> §7- Reload specific event");
             return true;
         }
 
         String subcommand = args[0].toLowerCase();
-
         switch (subcommand) {
             case "list" -> handleList(sender);
             case "info" -> handleInfo(sender, args);
             case "progress" -> handleProgress(sender, args);
             case "start" -> handleStart(sender, args);
             case "reload" -> handleReload(sender);
-            default -> sender.sendMessage("§cUnknown command. Use /eventui for help");
+            case "reset" -> handleReset(sender, args);
+            case "complete" -> handleComplete(sender, args);
+            case "debug" -> handleDebug(sender, args);
+            case "setprogress" -> handleSetProgress(sender, args);     // ✅ NUEVO
+            case "reloadevent" -> handleReloadEvent(sender, args);     // ✅ NUEVO
+            default -> sender.sendMessage("§cUnknown command. Use /ev for help");
         }
 
         return true;
     }
+
 
     private void handleList(CommandSender sender) {
         var events = plugin.getStorage().getAllEventDefinitions();
@@ -229,5 +248,354 @@ public class EventCommand implements CommandExecutor {
         plugin.reloadEvents();
         sender.sendMessage("§aEvents reloaded successfully!");
     }
+
+    /**
+     * Reset de eventos para testing.
+     */
+    private void handleReset(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can reset events!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui reset <event_id|all>");
+            return;
+        }
+
+        String target = args[1];
+
+        try {
+            if (target.equalsIgnoreCase("all")) {
+                // Reset TODOS los eventos
+                var allEvents = plugin.getStorage().getAllEventDefinitions();
+                int resetCount = 0;
+
+                for (EventDefinition eventDef : allEvents.values()) {
+                    var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventDef.getId());
+
+                    if (progressOpt.isPresent()) {
+                        // Eliminar progreso
+                        plugin.getStorage().removeProgress(player.getUniqueId(), eventDef.getId());
+
+                        // ✅ Notificar al cliente
+                        notifyStateChange(player.getUniqueId(), eventDef.getId(), com.eventui.api.event.EventState.AVAILABLE);
+
+                        resetCount++;
+                    }
+                }
+
+                sender.sendMessage("§a✓ Reset completed!");
+                sender.sendMessage("§7Cleared progress for " + resetCount + " event(s).");
+
+                // ✅ IMPORTANTE: Solicitar refresh de la UI
+                sender.sendMessage("§7Press K to refresh the events screen.");
+
+            } else {
+                // Reset un evento específico
+                String eventId = target;
+
+                var eventOpt = plugin.getStorage().getEventDefinition(eventId);
+                if (eventOpt.isEmpty()) {
+                    sender.sendMessage("§cEvent not found: " + eventId);
+                    return;
+                }
+
+                var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+                if (progressOpt.isEmpty()) {
+                    sender.sendMessage("§7You haven't started this event yet.");
+                    return;
+                }
+
+                // Eliminar progreso
+                plugin.getStorage().removeProgress(player.getUniqueId(), eventId);
+
+                sender.sendMessage("§a✓ Event reset: " + eventOpt.get().getDisplayName());
+                sender.sendMessage("§7Progress cleared. You can start it again.");
+
+                // ✅ Notificar al cliente
+                notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.AVAILABLE);
+            }
+
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to reset: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+    /**
+     * Completa instantáneamente un evento (para testing).
+     */
+    private void handleComplete(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can use this command!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui complete <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+
+        try {
+            var eventDefOpt = plugin.getStorage().getEventDefinition(eventId);
+            if (eventDefOpt.isEmpty()) {
+                sender.sendMessage("§cEvent not found: " + eventId);
+                return;
+            }
+
+            var eventDef = eventDefOpt.get();
+
+            // Crear/obtener progreso
+            var progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
+
+            // Si no está iniciado, iniciarlo primero
+            if (progress.getState() == com.eventui.api.event.EventState.AVAILABLE) {
+                progress.start();
+            }
+
+            // Completar todos los objetivos
+            for (var objective : eventDef.getObjectives()) {
+                var objProgress = progress.getObjectiveProgress(objective.getId());
+                if (objProgress != null) {
+                    objProgress.setProgress(objective.getTargetAmount());
+                }
+            }
+
+            // Marcar como completado
+            progress.complete();
+
+            sender.sendMessage("§a✓ Event completed: " + eventDef.getDisplayName());
+
+            // ✅ IMPORTANTE: Notificar al cliente el cambio de estado
+            notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.COMPLETED);
+
+            // ✅ NUEVO: Enviar actualización de progreso final
+            if (!eventDef.getObjectives().isEmpty()) {
+                var lastObjective = eventDef.getObjectives().get(eventDef.getObjectives().size() - 1);
+                plugin.getEventBridge().notifyProgressUpdate(
+                        player.getUniqueId(),
+                        eventId,
+                        lastObjective.getId(),
+                        lastObjective.getTargetAmount(),
+                        lastObjective.getTargetAmount(),
+                        lastObjective.getDescription()
+                );
+            }
+
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to complete: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+
+    /**
+     * Debug info detallada de un evento.
+     */
+    private void handleDebug(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can use this command!");
+            return;
+        }
+
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /eventui debug <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+
+        var eventDefOpt = plugin.getStorage().getEventDefinition(eventId);
+        if (eventDefOpt.isEmpty()) {
+            sender.sendMessage("§cEvent not found: " + eventId);
+            return;
+        }
+
+        var eventDef = eventDefOpt.get();
+
+        sender.sendMessage("§6═══ DEBUG INFO ═══");
+        sender.sendMessage("§eEvent: §f" + eventDef.getDisplayName());
+        sender.sendMessage("§eID: §7" + eventId);
+        sender.sendMessage("§ePlayer: §7" + player.getName());
+
+        var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+
+        if (progressOpt.isEmpty()) {
+            sender.sendMessage("§eState: §7AVAILABLE (not started)");
+            sender.sendMessage("§eProgress: §70%");
+        } else {
+            var progress = progressOpt.get();
+            sender.sendMessage("§eState: §f" + progress.getState());
+            sender.sendMessage("§eOverall Progress: §a" + String.format("%.1f%%", progress.getOverallProgress() * 100));
+            sender.sendMessage("§eStarted At: §7" + (progress.getStartedAt() > 0 ? new java.util.Date(progress.getStartedAt()) : "N/A"));
+
+            sender.sendMessage("§eObjectives:");
+            for (var objDef : eventDef.getObjectives()) {
+                var objProgress = progress.getObjectivesProgress().stream()
+                        .filter(op -> op.getObjectiveId().equals(objDef.getId()))
+                        .findFirst()
+                        .orElse(null);
+
+                if (objProgress != null) {
+                    String status = objProgress.isCompleted() ? "§a✓" : "§7○";
+                    sender.sendMessage(String.format("  %s %s: §f%d/%d §7(%s)",
+                            status,
+                            objDef.getDescription(),
+                            objProgress.getCurrentAmount(),
+                            objProgress.getTargetAmount(),
+                            objProgress.isCompleted() ? "COMPLETED" : "PENDING"
+                    ));
+                }
+            }
+        }
+
+        sender.sendMessage("§6═══════════════");
+    }
+    /**
+     * Establece el progreso de un objetivo específico.
+     */
+    private void handleSetProgress(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cOnly players can use this command!");
+            return;
+        }
+
+        if (args.length < 4) {
+            sender.sendMessage("§cUsage: /ev setprogress <event_id> <objective_id> <amount>");
+            return;
+        }
+
+        String eventId = args[1];
+        String objectiveId = args[2];
+        int amount;
+
+        try {
+            amount = Integer.parseInt(args[3]);
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§cAmount must be a number!");
+            return;
+        }
+
+        try {
+            // Verificar evento
+            var eventDefOpt = plugin.getStorage().getEventDefinition(eventId);
+            if (eventDefOpt.isEmpty()) {
+                sender.sendMessage("§cEvent not found: " + eventId);
+                return;
+            }
+
+            var eventDef = eventDefOpt.get();
+
+            // Verificar objetivo
+            var objectiveOpt = eventDef.getObjectives().stream()
+                    .filter(obj -> obj.getId().equals(objectiveId))
+                    .findFirst();
+
+            if (objectiveOpt.isEmpty()) {
+                sender.sendMessage("§cObjective not found: " + objectiveId);
+                return;
+            }
+
+            var objective = objectiveOpt.get();
+
+            // Obtener o crear progreso
+            var progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
+
+            // Si no está iniciado, iniciarlo
+            if (progress.getState() == com.eventui.api.event.EventState.AVAILABLE) {
+                progress.start();
+                notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.IN_PROGRESS);
+            }
+
+            // Establecer progreso del objetivo
+            var objProgress = progress.getObjectiveProgress(objectiveId);
+            if (objProgress != null) {
+                objProgress.setProgress(amount);
+
+                sender.sendMessage("§a✓ Progress updated!");
+                sender.sendMessage(String.format("§7%s: §f%d/%d",
+                        objective.getDescription(),
+                        amount,
+                        objective.getTargetAmount()));
+
+                // Notificar al cliente
+                plugin.getEventBridge().notifyProgressUpdate(
+                        player.getUniqueId(),
+                        eventId,
+                        objectiveId,
+                        amount,
+                        objective.getTargetAmount(),
+                        objective.getDescription()
+                );
+
+                // Verificar si se completó el evento
+                if (progress.areAllObjectivesCompleted()) {
+                    progress.complete();
+                    sender.sendMessage("§6§l✓ EVENT COMPLETED!");
+                    notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.COMPLETED);
+                }
+            }
+
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to set progress: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Recarga un evento específico desde su archivo JSON.
+     */
+    private void handleReloadEvent(CommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage("§cUsage: /ev reloadevent <event_id>");
+            return;
+        }
+
+        String eventId = args[1];
+
+        try {
+            // Verificar que el evento existe actualmente
+            var currentEventOpt = plugin.getStorage().getEventDefinition(eventId);
+            if (currentEventOpt.isEmpty()) {
+                sender.sendMessage("§cEvent not found: " + eventId);
+                sender.sendMessage("§7Use /ev reload to load all events.");
+                return;
+            }
+
+            // Buscar el archivo JSON del evento
+            java.io.File eventsDir = new java.io.File(plugin.getDataFolder(), "events");
+            java.io.File[] files = eventsDir.listFiles((dir, name) -> {
+                return name.endsWith(".json") && name.contains(eventId);
+            });
+
+            if (files == null || files.length == 0) {
+                sender.sendMessage("§cCouldn't find JSON file for event: " + eventId);
+                return;
+            }
+
+            // Cargar el archivo específico
+            var newEventDef = plugin.getConfigLoader().loadEventFromFile(files[0]);
+
+            // Actualizar en storage
+            plugin.getStorage().registerEvent(newEventDef);
+
+            sender.sendMessage("§a✓ Event reloaded: " + newEventDef.getDisplayName());
+            sender.sendMessage("§7File: " + files[0].getName());
+            sender.sendMessage("§7Objectives: " + newEventDef.getObjectives().size());
+
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to reload event: " + e.getMessage());
+            sender.sendMessage("§7Check console for details.");
+            e.printStackTrace();
+        }
+    }
+
+
+
+
 
 }

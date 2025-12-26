@@ -40,9 +40,9 @@ public class EventUIClient implements ClientModInitializer {
     }
 
     private void registerKeybinds() {
-        // Crear keybind (tecla 'K' por defecto)
+        // Crear keybind (tecla K por defecto)
         openEventsKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
-                "key.eventui.open_events",
+                "key.eventui.openevents",
                 GLFW.GLFW_KEY_K,
                 "category.eventui"
         ));
@@ -53,12 +53,98 @@ public class EventUIClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (openEventsKey.consumeClick()) {
                 LOGGER.info("=== EVENT SCREEN KEYBIND PRESSED! ===");
+
                 if (client.player != null) {
-                    client.setScreen(new EventScreen());
+                    // ✅ FASE 4A: Test con UI configurable
+                    testConfigurableUI(client);
                 }
             }
         });
 
-        LOGGER.info("Registered keybinds successfully: K = Open Events");
+        LOGGER.info("Registered keybinds successfully (K = Open Events)");
+    }
+
+    /**
+     * FASE 4A: Test de UI configurable.
+     */
+    private void testConfigurableUI(net.minecraft.client.Minecraft client) {
+        // Crear UI de prueba manualmente
+        java.util.List<com.eventui.api.ui.UIElement> elements = new java.util.ArrayList<>();
+
+        // Título
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "title",
+                com.eventui.api.ui.UIElementType.TEXT,
+                160, 20, 200, 20,
+                java.util.Map.of("content", "§6§lTEST UI - FASE 4A", "align", "center", "shadow", "true"),
+                java.util.List.of(),
+                true,
+                10
+        ));
+
+        // Subtítulo
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "subtitle",
+                com.eventui.api.ui.UIElementType.TEXT,
+                160, 40, 200, 20,
+                java.util.Map.of("content", "§7UI Configurable Funcionando", "align", "center", "shadow", "true"),
+                java.util.List.of(),
+                true,
+                10
+        ));
+
+        // Barra de progreso de ejemplo
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "test_progress",
+                com.eventui.api.ui.UIElementType.PROGRESS_BAR,
+                60, 100, 200, 10,
+                java.util.Map.of("progress", "0.75"),
+                java.util.List.of(),
+                true,
+                5
+        ));
+
+        // Texto de progreso
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "progress_text",
+                com.eventui.api.ui.UIElementType.TEXT,
+                160, 120, 200, 20,
+                java.util.Map.of("content", "§6Progress: 75%", "align", "center", "shadow", "true"),
+                java.util.List.of(),
+                true,
+                10
+        ));
+
+        // Botón Close
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "close_btn",
+                com.eventui.api.ui.UIElementType.BUTTON,
+                135, 200, 50, 20,
+                java.util.Map.of("text", "Close", "action", "close_screen"),
+                java.util.List.of(),
+                true,
+                100
+        ));
+
+        com.eventui.api.ui.UIConfig testConfig = new com.eventui.core.v2.config.UIConfigImpl(
+                "test_ui",
+                "Test UI",
+                320, 240,
+                elements,
+                null,
+                java.util.Map.of("blur_background", "true")
+        );
+
+        client.setScreen(new com.eventui.fabric.client.ui.ConfigurableUIScreen(testConfig));
+
+        LOGGER.info("Opened configurable UI with {} elements", elements.size());
+    }
+
+    /**
+     * FASE 4A: Abre una UI configurable (para testing).
+     */
+    public static void openConfigurableUI(com.eventui.api.ui.UIConfig config) {
+        var client = net.minecraft.client.Minecraft.getInstance();
+        client.setScreen(new com.eventui.fabric.client.ui.ConfigurableUIScreen(config));
     }
 }
