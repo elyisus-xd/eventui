@@ -65,51 +65,73 @@ public class EventUIClient implements ClientModInitializer {
     }
 
     /**
-     * FASE 4A: Test de UI configurable.
+     * FASE 4B: Test de UI configurable con data binding.
      */
     private void testConfigurableUI(net.minecraft.client.Minecraft client) {
-        // Crear UI de prueba manualmente
+        // Crear UI de prueba con DATA BINDING
         java.util.List<com.eventui.api.ui.UIElement> elements = new java.util.ArrayList<>();
 
-        // Título
+        // Título con binding
         elements.add(new com.eventui.core.v2.config.UIElementImpl(
                 "title",
                 com.eventui.api.ui.UIElementType.TEXT,
                 160, 20, 200, 20,
-                java.util.Map.of("content", "§6§lTEST UI - FASE 4A", "align", "center", "shadow", "true"),
+                java.util.Map.of("content", "§6§l{{event.displayName}}", "align", "center", "shadow", "true"),
                 java.util.List.of(),
                 true,
                 10
         ));
 
-        // Subtítulo
+        // Descripción del evento
         elements.add(new com.eventui.core.v2.config.UIElementImpl(
-                "subtitle",
+                "description",
                 com.eventui.api.ui.UIElementType.TEXT,
                 160, 40, 200, 20,
-                java.util.Map.of("content", "§7UI Configurable Funcionando", "align", "center", "shadow", "true"),
+                java.util.Map.of("content", "§7{{event.description}}", "align", "center", "shadow", "true"),
                 java.util.List.of(),
                 true,
                 10
         ));
 
-        // Barra de progreso de ejemplo
+        // Contador de eventos
         elements.add(new com.eventui.core.v2.config.UIElementImpl(
-                "test_progress",
+                "event_count",
+                com.eventui.api.ui.UIElementType.TEXT,
+                160, 60, 200, 20,
+                java.util.Map.of("content", "§7Total: {{event_count}} events", "align", "center", "shadow", "true"),
+                java.util.List.of(),
+                true,
+                10
+        ));
+
+        // Barra de progreso con binding
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "event_progress",
                 com.eventui.api.ui.UIElementType.PROGRESS_BAR,
                 60, 100, 200, 10,
-                java.util.Map.of("progress", "0.75"),
+                java.util.Map.of("progress", "{{progress.percentage}}"),
                 java.util.List.of(),
                 true,
                 5
         ));
 
-        // Texto de progreso
+        // Texto de progreso con binding
         elements.add(new com.eventui.core.v2.config.UIElementImpl(
                 "progress_text",
                 com.eventui.api.ui.UIElementType.TEXT,
                 160, 120, 200, 20,
-                java.util.Map.of("content", "§6Progress: 75%", "align", "center", "shadow", "true"),
+                java.util.Map.of("content", "§6Progress: {{progress.current}}/{{progress.target}} ({{progress.percentage}}%)", "align", "center", "shadow", "true"),
+                java.util.List.of(),
+                true,
+                10
+        ));
+
+        // Estado del evento
+        elements.add(new com.eventui.core.v2.config.UIElementImpl(
+                "event_state",
+                com.eventui.api.ui.UIElementType.TEXT,
+                160, 140, 200, 20,
+                java.util.Map.of("content", "§eState: §f{{event.state}}", "align", "center", "shadow", "true"),
                 java.util.List.of(),
                 true,
                 10
@@ -127,18 +149,19 @@ public class EventUIClient implements ClientModInitializer {
         ));
 
         com.eventui.api.ui.UIConfig testConfig = new com.eventui.core.v2.config.UIConfigImpl(
-                "test_ui",
-                "Test UI",
+                "test_ui_binding",
+                "Test UI with Data Binding",
                 320, 240,
                 elements,
-                null,
+                null, // Sin evento asociado, usará el primero disponible
                 java.util.Map.of("blur_background", "true")
         );
 
         client.setScreen(new com.eventui.fabric.client.ui.ConfigurableUIScreen(testConfig));
 
-        LOGGER.info("Opened configurable UI with {} elements", elements.size());
+        LOGGER.info("Opened configurable UI with data binding ({} elements)", elements.size());
     }
+
 
     /**
      * FASE 4A: Abre una UI configurable (para testing).

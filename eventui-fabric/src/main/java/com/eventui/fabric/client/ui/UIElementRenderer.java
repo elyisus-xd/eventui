@@ -4,7 +4,6 @@ import com.eventui.api.ui.UIElement;
 import com.eventui.api.ui.UIElementType;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.network.chat.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,7 +11,7 @@ import java.util.Map;
 
 /**
  * Renderiza elementos UI según su tipo.
- * FASE 4A: Sistema declarativo de renderizado.
+ * FASE 4B: Con data binding dinámico.
  */
 public class UIElementRenderer {
 
@@ -21,23 +20,23 @@ public class UIElementRenderer {
     /**
      * Renderiza un elemento UI y sus hijos.
      */
-    public void render(UIElement element, GuiGraphics graphics, Font font, int mouseX, int mouseY) {
+    public void render(UIElement element, GuiGraphics graphics, Font font, int mouseX, int mouseY, Map<String, Object> context) {
         if (!element.isVisible()) {
             return;
         }
 
         switch (element.getType()) {
             case IMAGE -> renderImage(element, graphics);
-            case TEXT -> renderText(element, graphics, font);
+            case TEXT -> renderText(element, graphics, font, context);
             case BUTTON -> renderButton(element, graphics, font, mouseX, mouseY);
-            case PROGRESS_BAR -> renderProgressBar(element, graphics);
-            case PANEL -> renderPanel(element, graphics, font, mouseX, mouseY);
+            case PROGRESS_BAR -> renderProgressBar(element, graphics, context);
+            case PANEL -> renderPanel(element, graphics, font, mouseX, mouseY, context);
             default -> LOGGER.warn("Unsupported element type: {}", element.getType());
         }
 
         // Renderizar hijos (recursivo)
         for (UIElement child : element.getChildren()) {
-            render(child, graphics, font, mouseX, mouseY);
+            render(child, graphics, font, mouseX, mouseY, context);
         }
     }
 
@@ -52,8 +51,6 @@ public class UIElementRenderer {
             return;
         }
 
-        // Por ahora, renderizar un rectángulo de color (placeholder)
-        // TODO: Cargar y renderizar textura real
         int color = parseColor(element.getProperties().getOrDefault("color", "808080"));
         graphics.fill(
                 element.getX(),
@@ -65,23 +62,26 @@ public class UIElementRenderer {
     }
 
     /**
-     * Renderiza texto.
+     * Renderiza texto (con data binding).
      */
-    private void renderText(UIElement element, GuiGraphics graphics, Font font) {
+    private void renderText(UIElement element, GuiGraphics graphics, Font font, Map<String, Object> context) {
         String content = element.getProperties().get("content");
 
         if (content == null) {
             content = "Missing content";
         }
 
-        // Procesar códigos de color Minecraft
+        // ✅ Resolver bindings
+        if (context != null) {
+            content = DataBinder.resolveBindings(content, context);
+        }
+
         String align = element.getProperties().getOrDefault("align", "left");
         boolean shadow = Boolean.parseBoolean(element.getProperties().getOrDefault("shadow", "true"));
 
         int x = element.getX();
         int y = element.getY();
 
-        // Alineación
         if ("center".equalsIgnoreCase(align)) {
             int textWidth = font.width(content);
             x = element.getX() + (element.getWidth() / 2) - (textWidth / 2);
@@ -103,11 +103,9 @@ public class UIElementRenderer {
     private void renderButton(UIElement element, GuiGraphics graphics, Font font, int mouseX, int mouseY) {
         boolean isHovered = isMouseOver(element, mouseX, mouseY);
 
-        // Color del botón (cambia en hover)
         int backgroundColor = isHovered ? 0xFFFFAA00 : 0xFF555555;
         int borderColor = isHovered ? 0xFFFFFF00 : 0xFF888888;
 
-        // Fondo del botón
         graphics.fill(
                 element.getX(),
                 element.getY(),
@@ -116,7 +114,6 @@ public class UIElementRenderer {
                 backgroundColor
         );
 
-        // Borde
         graphics.fill(element.getX(), element.getY(),
                 element.getX() + element.getWidth(), element.getY() + 1, borderColor);
         graphics.fill(element.getX(), element.getY() + element.getHeight() - 1,
@@ -126,7 +123,6 @@ public class UIElementRenderer {
         graphics.fill(element.getX() + element.getWidth() - 1, element.getY(),
                 element.getX() + element.getWidth(), element.getY() + element.getHeight(), borderColor);
 
-        // Texto del botón
         String text = element.getProperties().getOrDefault("text", "Button");
         int textWidth = font.width(text);
         int textX = element.getX() + (element.getWidth() / 2) - (textWidth / 2);
@@ -136,12 +132,25 @@ public class UIElementRenderer {
     }
 
     /**
-     * Renderiza una barra de progreso.
+     * Renderiza una barra de progreso (con binding).
      */
-    private void renderProgressBar(UIElement element, GuiGraphics graphics) {
-        // Obtener progreso (0.0 - 1.0)
-        float progress = Float.parseFloat(element.getProperties().getOrDefault("progress", "0.0"));
-        progress = Math.max(0.0f, Math.min(1.0f, progress));
+    private void renderProgressBar(UIElement element, GuiGraphics graphics, Map<String, Object> context) {
+        String progressStr = element.getProperties().getOrDefault("progress", "0.0");
+
+        // ✅ PRIMERO resolver binding, LUEGO parsear
+        if (context != null && progressStr.contains("{{")) {
+            progressStr = DataBinder.resolveBindings(progressStr, context);
+        }
+
+        // Ahora sí parsear el número
+        float progress;
+        try {
+            progress = Float.parseFloat(progressStr);
+            progress = Math.max(0.0f, Math.min(1.0f, progress / 100.0f)); // Convertir % a decimal
+        } catch (NumberFormatException e) {
+            LOGGER.warn("Invalid progress value '{}', using 0.0", progressStr);
+            progress = 0.0f;
+        }
 
         // Fondo
         graphics.fill(
@@ -170,11 +179,11 @@ public class UIElementRenderer {
                 element.getX() + element.getWidth(), element.getY() + element.getHeight(), 0xFF444444);
     }
 
+
     /**
      * Renderiza un panel (contenedor).
      */
-    private void renderPanel(UIElement element, GuiGraphics graphics, Font font, int mouseX, int mouseY) {
-        // Fondo del panel (opcional)
+    private void renderPanel(UIElement element, GuiGraphics graphics, Font font, int mouseX, int mouseY, Map<String, Object> context) {
         String bgColor = element.getProperties().get("background_color");
         if (bgColor != null) {
             int color = parseColor(bgColor);
@@ -186,8 +195,6 @@ public class UIElementRenderer {
                     color
             );
         }
-
-        // Los hijos se renderizan automáticamente en el método principal
     }
 
     /**
@@ -203,13 +210,12 @@ public class UIElementRenderer {
      */
     private int parseColor(String hex) {
         try {
-            // Soporta formatos: "RRGGBB" o "AARRGGBB"
             if (hex.startsWith("#")) {
                 hex = hex.substring(1);
             }
 
             if (hex.length() == 6) {
-                hex = "FF" + hex; // Agregar alpha si no existe
+                hex = "FF" + hex;
             }
 
             return (int) Long.parseLong(hex, 16);
