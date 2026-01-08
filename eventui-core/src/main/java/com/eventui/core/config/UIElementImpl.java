@@ -1,4 +1,4 @@
-package com.eventui.core.v2.config;
+package com.eventui.core.config;
 
 import com.eventui.api.ui.UIElement;
 import com.eventui.api.ui.UIElementType;

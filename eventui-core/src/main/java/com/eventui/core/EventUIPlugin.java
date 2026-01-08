@@ -1,16 +1,20 @@
-package com.eventui.core.v2;
+package com.eventui.core;
 
 import com.eventui.api.event.EventDefinition;
+import com.eventui.api.objective.ObjectiveType;
 import com.eventui.api.ui.UIConfig;
-import com.eventui.core.v2.bridge.PluginEventBridge;
-import com.eventui.core.v2.commands.EventCommand;
-import com.eventui.core.v2.config.EventConfigLoader;
-import com.eventui.core.v2.config.UIConfigLoader;
-import com.eventui.core.v2.storage.EventStorage;
-import com.eventui.core.v2.tracking.ObjectiveTracker;
+import com.eventui.core.bridge.PluginEventBridge;
+import com.eventui.core.commands.EventCommand;
+import com.eventui.core.commands.EventCommandTabCompleter;
+import com.eventui.core.config.EventConfigLoader;
+import com.eventui.core.config.UIConfigLoader;
+import com.eventui.core.rewards.RewardManager;
+import com.eventui.core.storage.EventStorage;
+import com.eventui.core.tracking.ObjectiveTracker;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Logger;
 
 public class EventUIPlugin extends JavaPlugin {
@@ -23,27 +27,32 @@ public class EventUIPlugin extends JavaPlugin {
     private PluginEventBridge eventBridge;
     private UIConfigLoader uiConfigLoader;
     private Map<String, UIConfig> uiConfigs;
+    private RewardManager rewardManager;
+    private ObjectiveTracker objectiveTracker;
 
     @Override
     public void onEnable() {
         instance = this;
 
         LOGGER.info("========================================");
-        LOGGER.info("  EventUI v2 - Nueva Arquitectura");
+        LOGGER.info("  EventUI Plugin initialization...");
         LOGGER.info("========================================");
 
         // Paso 1: Inicializar loader de configuración
         this.configLoader = new EventConfigLoader(getDataFolder());
         LOGGER.info("Initialized configuration loader");
 
-        // ✅ NUEVO: Paso 1.5 - Inicializar loader de UIs
-        this.uiConfigLoader = new com.eventui.core.v2.config.UIConfigLoader(getDataFolder());
+        // Paso 1.5 - Inicializar loader de UIs
+        this.uiConfigLoader = new UIConfigLoader(getDataFolder());
         this.uiConfigs = uiConfigLoader.loadAllUIConfigs();
         LOGGER.info("✓ Loaded " + uiConfigs.size() + " UI config(s)");
 
         // Paso 2: Inicializar storage
-        this.storage = new EventStorage();
+        this.storage = new EventStorage(this);
         LOGGER.info("Initialized event storage (in-memory)");
+
+        this.rewardManager = new RewardManager(this);
+        LOGGER.info("RewardManager initialized");
 
         // Paso 3: Cargar eventos desde JSON
         loadEvents();
@@ -54,11 +63,38 @@ public class EventUIPlugin extends JavaPlugin {
         // Paso 5: Registrar tracker de objetivos
         registerTrackers();
 
+        // ✅ NUEVO: Inicializar índices de optimización
+        objectiveTracker.buildObjectiveTypeIndex();
+        objectiveTracker.initializeActiveEventsIndex();
+        LOGGER.info("✓ Initialized optimization indexes");
+
         // Paso 6: Registrar comandos
         registerCommands();
+// ✅ Task OPTIMIZADO para COLLECT_ITEM (con índices)
+        getServer().getScheduler().runTaskTimer(this, () ->
+                getServer().getOnlinePlayers().forEach(player ->
+                        objectiveTracker.checkCollectObjectives(player)
+                ), 40L, 40L);
+        // ✅ Task OPTIMIZADO para REACH_LOCATION (pre-filtrado + intervalo mayor)
+        getServer().getScheduler().runTaskTimer(this, () -> {
+            getServer().getOnlinePlayers().forEach(player -> {
+                Set<String> relevantEvents = objectiveTracker.getRelevantActiveEvents(
+                        player.getUniqueId(), ObjectiveType.REACH_LOCATION);
 
-        LOGGER.info("EventUI v2 enabled successfully!");
+                if (!relevantEvents.isEmpty()) {
+                    objectiveTracker.checkReachLocationObjectives(player);
+                }
+            });
+        }, 40L, 40L);
+
+
+        LOGGER.info("EventUI enabled successfully!");
         LOGGER.info("Loaded " + storage.getAllEventDefinitions().size() + " events");
+    }
+
+
+    public RewardManager getRewardManager() {
+        return rewardManager;
     }
 
     @Override
@@ -67,7 +103,7 @@ public class EventUIPlugin extends JavaPlugin {
             eventBridge.getNetworkHandler().unregister();
         }
 
-        LOGGER.info("EventUI v2 disabled");
+        LOGGER.info("EventUI disabled");
         instance = null;
     }
 
@@ -99,16 +135,22 @@ public class EventUIPlugin extends JavaPlugin {
     }
 
     private void registerTrackers() {
-        getServer().getPluginManager().registerEvents(new ObjectiveTracker(this), this);
+        // ✅ Crear y guardar la instancia
+        this.objectiveTracker = new ObjectiveTracker(this);
+
+        // Registrar como listener
+        getServer().getPluginManager().registerEvents(objectiveTracker, this);
+
         LOGGER.info("Registered objective trackers");
     }
+
 
     private void registerCommands() {
         var command = getCommand("eventui");
         if (command != null) {
-            EventCommand executor = new com.eventui.core.v2.commands.EventCommand(this);
+            EventCommand executor = new EventCommand(this);
             command.setExecutor(executor);
-            command.setTabCompleter(new com.eventui.core.v2.commands.EventCommandTabCompleter(this));
+            command.setTabCompleter(new EventCommandTabCompleter(this));
             LOGGER.info("Registered commands with tab completion");
         } else {
             LOGGER.warning("Failed to register eventui command - command not found in plugin.yml!");
@@ -145,4 +187,9 @@ public class EventUIPlugin extends JavaPlugin {
     public PluginEventBridge getEventBridge() {
         return eventBridge;
     }
+
+    public ObjectiveTracker getObjectiveTracker() {
+        return objectiveTracker;
+    }
+
 }

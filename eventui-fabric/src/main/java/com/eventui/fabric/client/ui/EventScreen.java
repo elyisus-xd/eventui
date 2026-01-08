@@ -1,5 +1,7 @@
 package com.eventui.fabric.client.ui;
 
+import com.eventui.api.bridge.MessageType;
+import com.eventui.fabric.client.bridge.BridgeMessageImpl;
 import com.eventui.fabric.client.bridge.ClientEventBridge;
 import com.eventui.fabric.client.viewmodel.EventViewModel;
 import net.minecraft.client.Minecraft;
@@ -7,25 +9,91 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.eventui.fabric.client.ui.animation.*;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+
 
 /**
- * Pantalla principal de eventos usando la nueva arquitectura.
- * FASE 3: Con scroll para múltiples eventos.
+ * Pantalla principal HARDODEADA default de eventos.
+ * Con scroll para múltiples eventos.
+ * Con botones interactivos.
  */
 public class EventScreen extends Screen {
+
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventScreen.class);
+
 
     private final EventViewModel viewModel;
     private List<EventViewModel.EventData> events;
 
-    // FASE 3: Variables de scroll
+    /**
+     * Representa una categoría con su posición de scroll.
+     */
+    private record CategorySection(String category, String displayName, int yPosition, int eventCount, int color) {}
+
+    /**
+     * Lista de secciones de categoría calculadas dinámicamente.
+     */
+    private List<CategorySection> categorySections = new ArrayList<>();
+
+
+    // ✅ NUEVO: Enum para tabs
+    public enum TabFilter {
+        ALL,           // Mostrar todos
+        IN_PROGRESS,
+        AVAILABLE,
+        LOCKED,
+        COMPLETED
+    }
+
+    // ✅ NUEVO: Tab activa (default = AVAILABLE porque es la más común)
+    private TabFilter activeTab = TabFilter.AVAILABLE;
+
+    // Al inicio de la clase EventScreen
+    private double miniNavScrollOffset = 0;
+    private double miniNavMaxScroll = 0;
+
+    // ✅ CONSTANTES DE ESPACIADO DINÁMICO
+    private static final int SECTION_HEADER_HEIGHT = 15;   // Altura del header de sección
+    private static final int CARD_GAP = 15;                 // Gap entre cards
+    private static final int SECTION_PADDING = 20;          // Padding después de cada sección
+    private static final int FINAL_PADDING = 50;            // Padding al final del contenido
+
+    // ✅ NUEVO: Stats globales
+    private int completedCount = 0;
+    private int inProgressCount = 0;
+    private int availableCount = 0;
+
+    // ✅ NUEVO: Search Bar
+    private net.minecraft.client.gui.components.EditBox searchField;
+    private String searchQuery = "";
+    private List<EventViewModel.EventData> filteredEvents; // ← Lista filtrada
+
+    // Variables de scroll
     private double scrollOffset = 0;
+    private double targetScrollOffset = 0; // ✅ Scroll objetivo para animación
     private double maxScrollOffset = 0;
     private static final int SCROLL_SPEED = 20;
-    private static final int TOP_MARGIN = 55;
+    private static final int TOP_MARGIN = 105;
     private static final int BOTTOM_MARGIN = 50;
+
+    private final List<ClickableButton> clickableButtons = new ArrayList<>();
+
+    // ✅ Sistema de animaciones
+    private final AnimationManager animationManager = new AnimationManager();
+    private float screenAlpha = 0f;
+    private float overlayAlpha = 0f;
+    private FloatAnimation currentScrollAnimation = null;
+    // ✅ Almacena el alpha de hover por cada event card
+    private final Map<String, Float> cardHoverAlpha = new java.util.HashMap<>();
+    // ✅ Almacena el scale de hover por cada botón
+    private final Map<String, Float> buttonHoverScale = new java.util.HashMap<>();
+    // ✅ Almacena el progreso actual animado por cada evento
+    private final Map<String, Float> animatedProgress = new java.util.HashMap<>();
 
     public EventScreen() {
         super(Component.literal("Events"));
@@ -33,23 +101,28 @@ public class EventScreen extends Screen {
         var player = Minecraft.getInstance().player;
         if (player != null) {
             this.viewModel = ClientEventBridge.getInstance().getOrCreateViewModel(player.getUUID());
-            this.events = viewModel.getAllEvents();
 
-            System.out.println("[EventScreen] Constructor - Eventos cargados: " + events.size());
-            for (int i = 0; i < events.size(); i++) {
-                EventViewModel.EventData event = events.get(i);
-                System.out.println("  [" + i + "] " + event.displayName + " - Estado: " + event.state);
-            }
+            LOGGER.info("Requesting fresh events from server...");
+            viewModel.requestEvents();
+            this.events = viewModel.getAllEvents();
+            this.filteredEvents = new ArrayList<>(this.events); // ← NUEVO
+
+            LOGGER.info("EventScreen constructor - Events loaded: {}", events.size());
 
             viewModel.addChangeListener(this::onEventsUpdated);
 
             if (this.events.isEmpty()) {
-                System.out.println("[EventScreen] Lista vacía, solicitando eventos...");
+                LOGGER.info("Empty event list, requesting from server...");
                 viewModel.requestEvents();
             }
+
+            // ✅ NUEVO: Aplicar filtro inicial según tab default
+            applyTabFilter();
+
         } else {
             this.viewModel = null;
             this.events = List.of();
+            this.filteredEvents = List.of(); // ← NUEVO
         }
     }
 
@@ -57,29 +130,119 @@ public class EventScreen extends Screen {
     protected void init() {
         super.init();
 
+        // ✅ NUEVO: Search Bar
+        int searchWidth = 200;
+        int searchHeight = 20;
+        int searchX = (this.width / 2) - (searchWidth / 2);
+        int searchY = 78; // Justo debajo del panel de stats
+
+        this.searchField = new net.minecraft.client.gui.components.EditBox(
+                this.font,
+                searchX,
+                searchY,
+                searchWidth,
+                searchHeight,
+                Component.literal("Search events...")
+        );
+
+        // Configurar el search field
+        this.searchField.setMaxLength(50);
+        this.searchField.setHint(Component.literal("§7Search events...")); // Placeholder
+        this.searchField.setResponder(this::onSearchChanged); // ← Callback cuando cambia el texto
+
+        this.addRenderableWidget(this.searchField);
+
+        // Botón Close (más abajo para dar espacio)
         this.addRenderableWidget(Button.builder(
                 Component.literal("Close"),
                 button -> this.onClose()
         ).bounds(this.width / 2 - 50, this.height - 30, 100, 20).build());
 
         updateMaxScroll();
+
+        playScreenFadeIn();
+
     }
 
     private void onEventsUpdated(List<EventViewModel.EventData> newEvents) {
         Minecraft.getInstance().execute(() -> {
-            System.out.println("[EventScreen] onEventsUpdated - Nuevos eventos: " + newEvents.size());
+            LOGGER.info("onEventsUpdated - New events: {}", newEvents.size());
             this.events = newEvents;
-            for (int i = 0; i < events.size(); i++) {
-                EventViewModel.EventData event = events.get(i);
-                System.out.println("  [" + i + "] " + event.displayName + " - Estado: " + event.state);
-            }
+            updateFilteredEvents();
             updateMaxScroll();
         });
     }
 
     /**
-     * FASE 3: Calcula el scroll máximo basado en el contenido.
+     * ✅ Animación de fade-in al abrir la pantalla.
      */
+    private void playScreenFadeIn() {
+        FloatAnimation fadeIn = new FloatAnimation(
+                0f,
+                1f,
+                300,
+                Easing.EASE_OUT_CUBIC,
+                alpha -> {
+                    this.screenAlpha = alpha;
+                    this.overlayAlpha = alpha * 0.8f;
+                }
+        );
+
+        animationManager.play(fadeIn);
+    }
+
+    /**
+     * ✅ Tick para actualizar animaciones.
+     */
+    @Override
+    public void tick() {
+        super.tick();
+        animationManager.tick();
+
+        // Interpolación continua del scroll
+        if (Math.abs(scrollOffset - targetScrollOffset) > 0.5) {
+            double diff = targetScrollOffset - scrollOffset;
+            scrollOffset += diff * 0.35;
+        } else {
+            scrollOffset = targetScrollOffset;
+        }
+
+        // ✅ Interpolar hover alpha de todos los cards
+        cardHoverAlpha.replaceAll((id, currentAlpha) -> {
+            if (currentAlpha > 0.01f) {
+                return currentAlpha * 0.85f;
+            }
+            return 0f;
+
+        });
+// ✅ Interpolar barras de progreso hacia su valor real
+        animatedProgress.replaceAll((eventId, currentProgress) -> {
+            // Buscar el progreso real del evento
+            EventViewModel.EventData event = events.stream()
+                    .filter(e -> e.id.equals(eventId))
+                    .findFirst()
+                    .orElse(null);
+
+            if (event != null) {
+                float targetProgress = event.getProgressPercentage();
+
+                // Interpolar suavemente hacia el target
+                if (Math.abs(currentProgress - targetProgress) > 0.005f) {
+                    float diff = targetProgress - currentProgress;
+                    return currentProgress + diff * 0.15f; // Velocidad moderada
+                } else {
+                    return targetProgress; // Snap al final
+                }
+            }
+
+            return currentProgress; // Mantener si no se encuentra el evento
+        });
+
+    }
+
+
+
+
     private void updateMaxScroll() {
         if (this.height == 0) return;
 
@@ -87,54 +250,260 @@ public class EventScreen extends Screen {
         int visibleHeight = this.height - TOP_MARGIN - BOTTOM_MARGIN;
         maxScrollOffset = Math.max(0, contentHeight - visibleHeight);
 
+        // ✅ Ajustar todos los offsets si exceden el límite
         scrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollOffset));
+        targetScrollOffset = Math.max(0, Math.min(targetScrollOffset, maxScrollOffset));
     }
 
     /**
-     * FASE 3: Calcula la altura total del contenido.
+     * Calcula la altura TOTAL del contenido scrolleable.
+     * Se basa completamente en calculateEventHeight() - sin valores hardcodeados.
+     */
+    /**
+     * Calcula la altura TOTAL del contenido scrolleable.
+     * IMPORTANTE: Debe coincidir EXACTAMENTE con lo que renderiza renderScrollableContent()
      */
     private int calculateContentHeight() {
         int totalHeight = 0;
 
-        List<EventViewModel.EventData> available = new ArrayList<>();
-        List<EventViewModel.EventData> inProgress = new ArrayList<>();
-        List<EventViewModel.EventData> completed = new ArrayList<>();
+        // ✅ Agrupar por categoría (igual que en renderScrollableContent)
+        Map<String, List<EventViewModel.EventData>> eventsByCategory = new LinkedHashMap<>();
 
-        for (EventViewModel.EventData event : events) {
-            switch (event.state) {
-                case AVAILABLE -> available.add(event);
-                case IN_PROGRESS -> inProgress.add(event);
-                case COMPLETED -> completed.add(event);
+        for (EventViewModel.EventData event : filteredEvents) {
+            eventsByCategory
+                    .computeIfAbsent(event.category, k -> new ArrayList<>())
+                    .add(event);
+        }
+
+        // ✅ Calcular altura por categoría
+        for (Map.Entry<String, List<EventViewModel.EventData>> entry : eventsByCategory.entrySet()) {
+            List<EventViewModel.EventData> categoryEvents = entry.getValue();
+
+            if (categoryEvents.isEmpty()) continue;
+
+            // Header de categoría
+            totalHeight += SECTION_HEADER_HEIGHT;
+
+            // Eventos de esta categoría
+            for (EventViewModel.EventData event : categoryEvents) {
+                totalHeight += calculateEventHeight(event);
+                totalHeight += CARD_GAP;
             }
+
+            // Padding entre categorías
+            totalHeight += SECTION_PADDING;
         }
 
-        if (!inProgress.isEmpty()) {
-            totalHeight += 15;
-            totalHeight += inProgress.size() * 110;
-        }
-
-        if (!available.isEmpty()) {
-            totalHeight += 15;
-            totalHeight += available.size() * 80;
-        }
-
-        if (!completed.isEmpty()) {
-            totalHeight += 15;
-            totalHeight += completed.size() * 70;
-        }
+        // Padding final
+        totalHeight += FINAL_PADDING;
 
         return totalHeight;
     }
 
+
+
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        if (maxScrollOffset > 0) {
-            scrollOffset -= verticalAmount * SCROLL_SPEED;
-            scrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollOffset));
+        // ✅ NUEVO: Detectar si el mouse está sobre el mini-nav
+        int navX = this.width - 30;
+        int navStartY = TOP_MARGIN + 10;
+        int navWidth = 22;
+        int maxNavHeight = this.height - TOP_MARGIN - BOTTOM_MARGIN - 20;
+
+        boolean isOverMiniNav = mouseX >= navX - 2 && mouseX <= navX + navWidth + 4 &&
+                mouseY >= navStartY && mouseY <= navStartY + maxNavHeight;
+
+        if (isOverMiniNav && miniNavMaxScroll > 0) {
+            // Scroll del mini-nav
+            miniNavScrollOffset -= (verticalAmount * 15);  // Velocidad de scroll
+            miniNavScrollOffset = Math.max(0, Math.min(miniNavScrollOffset, miniNavMaxScroll));
             return true;
         }
+
+        // Scroll del contenido principal
+        if (maxScrollOffset > 0) {
+            targetScrollOffset -= (verticalAmount * SCROLL_SPEED);
+            targetScrollOffset = Math.max(0, Math.min(targetScrollOffset, maxScrollOffset));
+            return true;
+        }
+
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
+
+
+
+
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0) {  // Click izquierdo
+
+            // ✅ NUEVO: Detectar clicks en tabs del panel de stats
+            if (checkTabClick(mouseX, mouseY)) {
+                return true;  // Click manejado
+            }
+
+            // ✅ NUEVO: Detectar clicks en mini-nav
+            if (checkMiniNavClick(mouseX, mouseY)) {
+                return true;
+            }
+
+            // Click en botones de eventos (código existente)
+            for (ClickableButton btn : clickableButtons) {
+                if (btn.isMouseOver(mouseX, mouseY)) {
+                    btn.onClick();
+                    return true;
+                }
+            }
+        }
+
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /**
+     * Detecta clicks en el mini-nav scrolleable.
+     */
+    private boolean checkMiniNavClick(double mouseX, double mouseY) {
+        if (categorySections.isEmpty()) return false;
+
+        int navX = this.width - 30;
+        int navStartY = TOP_MARGIN + 10;
+        int navWidth = 22;
+        int navItemHeight = 20;
+        int navItemSpacing = 4;
+        int maxNavHeight = this.height - TOP_MARGIN - BOTTOM_MARGIN - 20;
+
+        // Aplicar scroll del mini-nav
+        int yPos = navStartY - (int) miniNavScrollOffset;
+
+        for (CategorySection section : categorySections) {
+            // Verificar si el click está dentro de esta sección del mini-nav
+            if (mouseX >= navX && mouseX <= navX + navWidth &&
+                    mouseY >= yPos && mouseY <= yPos + navItemHeight &&
+                    mouseY >= navStartY && mouseY <= navStartY + maxNavHeight) {
+
+                // ✅ SIMPLE: section.yPosition ya es absoluta
+                targetScrollOffset = Math.max(0, Math.min(section.yPosition, maxScrollOffset));
+
+                // Sonido
+                if (this.minecraft.player != null) {
+                    this.minecraft.player.playSound(
+                            net.minecraft.sounds.SoundEvents.UI_BUTTON_CLICK.value(),
+                            0.5f, 1.4f
+                    );
+                }
+
+                LOGGER.info("Mini-nav: Jumping to category '{}' at position {}",
+                        section.category, section.yPosition);
+
+                return true;
+            }
+
+            yPos += navItemHeight + navItemSpacing;
+        }
+
+        return false;
+    }
+
+
+
+
+    /**
+     * Detecta y maneja clicks en las tabs del stats panel.
+     * @return true si se hizo click en alguna tab
+     */
+    private boolean checkTabClick(double mouseX, double mouseY) {
+        int panelY = 25;
+        int panelCenterX = this.width / 2;
+        int panelWidth = 370;
+        int panelX = panelCenterX - panelWidth / 2;
+
+        int boxWidth = 85;
+        int boxHeight = 16;
+        int boxSpacing = 5;
+        int startX = panelX + 5;
+        int boxY = panelY + 3;
+
+        // Verificar cada tab
+        TabFilter[] tabs = {TabFilter.COMPLETED, TabFilter.IN_PROGRESS, TabFilter.AVAILABLE, TabFilter.LOCKED};
+
+        for (int i = 0; i < tabs.length; i++) {
+            int tabX = startX + i * (boxWidth + boxSpacing);
+
+            // Detectar click en el área de la tab
+            if (mouseX >= tabX && mouseX <= tabX + boxWidth &&
+                    mouseY >= boxY && mouseY <= boxY + boxHeight) {
+
+                // ✅ Cambiar tab activa
+                TabFilter clickedTab = tabs[i];
+
+                if (this.activeTab != clickedTab) {
+                    this.activeTab = clickedTab;
+
+                    // ✅ Aplicar filtro y resetear scroll
+                    applyTabFilter();
+                    scrollOffset = 0;
+                    targetScrollOffset = 0;
+
+                    // Sonido de click
+                    if (this.minecraft.player != null) {
+                        this.minecraft.player.playSound(
+                                net.minecraft.sounds.SoundEvents.UI_BUTTON_CLICK.value(),
+                                0.5f, 1.2f
+                        );
+                    }
+
+                    LOGGER.info("Tab changed to: {}", clickedTab);
+                }
+
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Filtra eventos según la tab activa.
+     */
+    private void applyTabFilter() {
+        List<EventViewModel.EventData> baseList = events;
+
+        // ✅ Aplicar filtro de búsqueda primero (si existe)
+        if (!searchQuery.isEmpty()) {
+            baseList = events.stream()
+                    .filter(event ->
+                            event.displayName.toLowerCase().contains(searchQuery) ||
+                                    event.description.toLowerCase().contains(searchQuery) ||
+                                    event.category.toLowerCase().contains(searchQuery)
+                    )
+                    .toList();
+        }
+
+        // ✅ Aplicar filtro de tab
+        this.filteredEvents = baseList.stream()
+                .filter(this::matchesActiveTab)
+                .collect(java.util.stream.Collectors.toList());
+
+        updateMaxScroll();
+
+        LOGGER.info("Filtered events by tab {}: {} events", activeTab, filteredEvents.size());
+    }
+
+    /**
+     * Verifica si un evento coincide con la tab activa.
+     */
+    private boolean matchesActiveTab(EventViewModel.EventData event) {
+        return switch (activeTab) {
+            case ALL -> true;  // Mostrar todos
+            case IN_PROGRESS -> event.state == com.eventui.api.event.EventState.IN_PROGRESS;
+            case AVAILABLE -> event.state == com.eventui.api.event.EventState.AVAILABLE && !event.isLocked;
+            case LOCKED -> event.isLocked;
+            case COMPLETED -> event.state == com.eventui.api.event.EventState.COMPLETED;
+        };
+    }
+
 
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
@@ -143,27 +512,47 @@ public class EventScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        super.renderBackground(graphics, mouseX, mouseY, partialTick);
-        graphics.fill(0, 0, this.width, this.height, 0x80000000);
+        // ✅ Aplicar fade-in con alpha animado
+        if (screenAlpha < 0.99f) {
+            super.renderBackground(graphics, mouseX, mouseY, partialTick);
+            int overlayColor = (int)(overlayAlpha * 128) << 24;
+            graphics.fill(0, 0, this.width, this.height, overlayColor);
+        } else {
+            super.renderBackground(graphics, mouseX, mouseY, partialTick);
+            graphics.fill(0, 0, this.width, this.height, 0x80000000);
+        }
 
+        // ✅ Solo título principal
         graphics.drawCenteredString(
                 this.font,
                 "§6§lEVENTS",
                 this.width / 2,
-                20,
+                12,
                 0xFFFFFF
         );
 
-        String debugInfo = String.format("§7Total events: %d", events.size());
-        graphics.drawCenteredString(
-                this.font,
-                debugInfo,
-                this.width / 2,
-                35,
-                0xFFFFFF
-        );
+        // ✅ FASE 3.1: Panel de stats (ahora tabs interactivas)
+        renderStatsPanel(graphics);
 
-        if (events.isEmpty()) {
+        // ✅ FASE 3.3: Barra de progreso global
+        renderGlobalProgress(graphics);
+
+        // ✅ NUEVO: Mostrar contador de resultados si hay búsqueda activa
+        if (!searchQuery.isEmpty()) {
+            String resultsText = String.format("§7Found §e%d§7 event(s)", filteredEvents.size());
+            graphics.drawCenteredString(this.font, resultsText, this.width / 2, 102, 0xFFFFFF);
+        }
+
+        if (filteredEvents.isEmpty() && !searchQuery.isEmpty()) {
+            // Mensaje cuando no hay resultados
+            graphics.drawCenteredString(
+                    this.font,
+                    "§7No events match '§e" + searchQuery + "§7'",
+                    this.width / 2,
+                    this.height / 2,
+                    0xFFFFFF
+            );
+        } else if (events.isEmpty()) {
             graphics.drawCenteredString(
                     this.font,
                     "§7No events available",
@@ -172,95 +561,289 @@ public class EventScreen extends Screen {
                     0xFFFFFF
             );
         } else {
-            renderScrollableContent(graphics);
-        }
+            clickableButtons.clear();
+            renderScrollableContent(graphics, mouseX, mouseY);
 
-        if (maxScrollOffset > 0) {
-            renderScrollIndicator(graphics);
+            // ✅ NUEVO: Renderizar mini-nav (solo si hay categorías y scroll)
+            if (!categorySections.isEmpty() && maxScrollOffset > 0) {
+                renderMiniNav(graphics, mouseX, mouseY);
+            }
+
+            // ✅ NUEVO: Renderizar gradientes de fade
+            renderScrollFadeGradients(graphics);
+
+            // ✅ Scroll indicator
+            if (maxScrollOffset > 0) {
+                renderScrollIndicator(graphics);
+            }
         }
 
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
+
     /**
-     * FASE 3: Renderiza el contenido con scroll y clipping.
+     * Renderiza el mini-nav de categorías con scroll independiente.
      */
-    private void renderScrollableContent(GuiGraphics graphics) {
+    private void renderMiniNav(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (categorySections.isEmpty()) return;
+
+        int navX = this.width - 30;
+        int navStartY = TOP_MARGIN + 10;
+        int navWidth = 22;
+        int navItemHeight = 20;
+        int navItemSpacing = 4;
+
+        int maxNavHeight = this.height - TOP_MARGIN - BOTTOM_MARGIN - 20;
+        int totalNavContent = categorySections.size() * (navItemHeight + navItemSpacing);
+
+        miniNavMaxScroll = Math.max(0, totalNavContent - maxNavHeight);
+
+        // ✅ Variables para tooltip (renderizar DESPUÉS del scissor)
+        Component tooltipToRender = null;
+        int tooltipMouseX = 0;
+        int tooltipMouseY = 0;
+
+        // Enable scissor para el área del mini-nav
+        graphics.enableScissor(navX - 2, navStartY, navX + navWidth + 2, navStartY + maxNavHeight);
+
+        int yPos = navStartY - (int) miniNavScrollOffset;
+        int currentScrollMid = (int) scrollOffset + (this.height - TOP_MARGIN - BOTTOM_MARGIN) / 2;
+
+        for (int i = 0; i < categorySections.size(); i++) {
+            CategorySection section = categorySections.get(i);
+
+            boolean isHovered = mouseX >= navX && mouseX <= navX + navWidth &&
+                    mouseY >= yPos && mouseY <= yPos + navItemHeight &&
+                    mouseY >= navStartY && mouseY <= navStartY + maxNavHeight;
+
+            boolean isActive = currentScrollMid >= section.yPosition &&
+                    (i == categorySections.size() - 1 ||
+                            currentScrollMid < categorySections.get(i + 1).yPosition);
+
+            // Color de fondo
+            int bgColor;
+            if (isActive) {
+                bgColor = 0xDD000000;
+            } else if (isHovered) {
+                bgColor = 0xAA222222;
+            } else {
+                bgColor = 0x66000000;
+            }
+
+            // Fondo
+            graphics.fill(navX, yPos, navX + navWidth, yPos + navItemHeight, bgColor);
+
+            // Borde izquierdo coloreado
+            int borderWidth = isActive ? 3 : 2;
+            int borderColor = isActive ? section.color : (section.color & 0xFFFFFF) | 0x66000000;
+            graphics.fill(navX, yPos, navX + borderWidth, yPos + navItemHeight, borderColor);
+
+            // Icono de categoría
+            String icon = getCategoryInitial(section.category);
+            int iconWidth = this.font.width(icon);
+            int iconX = navX + (navWidth - iconWidth) / 2;
+            int iconY = yPos + (navItemHeight - 8) / 2;
+
+            int textColor = isActive ? 0xFFFFFFFF : 0xFFCCCCCC;
+            graphics.drawString(this.font, icon, iconX, iconY, textColor, false);
+
+            // ✅ CORREGIDO: Guardar tooltip para renderizar DESPUÉS
+            if (isHovered) {
+                tooltipToRender = Component.literal(
+                        "§f" + section.displayName + "\n" +
+                                "§7" + section.eventCount + " eventos"
+                );
+                tooltipMouseX = mouseX;
+                tooltipMouseY = mouseY;
+            }
+
+            yPos += navItemHeight + navItemSpacing;
+        }
+
+        graphics.disableScissor();
+
+        // ✅ Renderizar tooltip FUERA del scissor
+        if (tooltipToRender != null) {
+            graphics.renderTooltip(this.font, tooltipToRender, tooltipMouseX, tooltipMouseY);
+        }
+
+        // Renderizar scroll bar del mini-nav
+        if (miniNavMaxScroll > 0) {
+            int scrollBarX = navX + navWidth + 2;
+            int scrollBarWidth = 2;
+            int scrollBarY = navStartY;
+            int scrollBarHeight = maxNavHeight;
+
+            graphics.fill(scrollBarX, scrollBarY, scrollBarX + scrollBarWidth,
+                    scrollBarY + scrollBarHeight, 0x44FFFFFF);
+
+            double scrollPercentage = miniNavScrollOffset / miniNavMaxScroll;
+            int thumbHeight = Math.max(10, (int)(scrollBarHeight * ((double)maxNavHeight / totalNavContent)));
+            int thumbY = scrollBarY + (int)((scrollBarHeight - thumbHeight) * scrollPercentage);
+
+            graphics.fill(scrollBarX, thumbY, scrollBarX + scrollBarWidth,
+                    thumbY + thumbHeight, 0xFFFFAA00);
+        }
+    }
+
+
+
+
+
+
+    private void renderScrollableContent(GuiGraphics graphics, int mouseX, int mouseY) {
         int startY = TOP_MARGIN;
         int endY = this.height - BOTTOM_MARGIN;
+        int leftMargin = 45;
+        int rightMargin = this.width - 45;
 
         graphics.enableScissor(0, startY, this.width, endY);
 
-        int yOffset = startY - (int)scrollOffset;
+        int yOffset = startY - (int) scrollOffset;
 
-        List<EventViewModel.EventData> available = new ArrayList<>();
-        List<EventViewModel.EventData> inProgress = new ArrayList<>();
-        List<EventViewModel.EventData> completed = new ArrayList<>();
+        // ✅ NUEVO: Limpiar y recalcular secciones de categoría
+        categorySections.clear();
 
-        for (EventViewModel.EventData event : events) {
-            switch (event.state) {
-                case AVAILABLE -> available.add(event);
-                case IN_PROGRESS -> inProgress.add(event);
-                case COMPLETED -> completed.add(event);
-            }
+        // ✅ Variable para trackear posición ABSOLUTA (sin scroll aplicado)
+        int absoluteYPosition = 0;
+
+        // Agrupar eventos filtrados por categoría
+        Map<String, List<EventViewModel.EventData>> eventsByCategory = new LinkedHashMap<>();
+
+        for (EventViewModel.EventData event : filteredEvents) {
+            eventsByCategory
+                    .computeIfAbsent(event.category, k -> new ArrayList<>())
+                    .add(event);
         }
 
-        if (!inProgress.isEmpty()) {
-            if (yOffset > startY - 15 && yOffset < endY) {
-                graphics.drawString(this.font, "§e§lIN PROGRESS", 45, yOffset, 0xFFFFFF);
-            }
-            yOffset += 15;
+        // Renderizar por categoría
+        for (Map.Entry<String, List<EventViewModel.EventData>> entry : eventsByCategory.entrySet()) {
+            String category = entry.getKey();
+            List<EventViewModel.EventData> categoryEvents = entry.getValue();
 
-            for (EventViewModel.EventData event : inProgress) {
-                if (yOffset + 110 > startY && yOffset < endY) {
-                    yOffset = renderEvent(graphics, event, yOffset);
+            if (categoryEvents.isEmpty()) continue;
+
+            // ✅ CORREGIDO: Guardar posición ABSOLUTA (sin scroll)
+            categorySections.add(new CategorySection(
+                    category,
+                    getCategoryDisplayName(category),
+                    absoluteYPosition,  // ✅ Posición absoluta
+                    categoryEvents.size(),
+                    getCategoryColor(category)
+            ));
+
+            // Renderizar header de categoría
+            if (yOffset >= startY - SECTION_HEADER_HEIGHT && yOffset <= endY) {
+                String header = String.format("§f§l%s §7(%d)",
+                        getCategoryDisplayName(category).toUpperCase(),
+                        categoryEvents.size());
+                graphics.drawString(this.font, header, leftMargin, yOffset, 0xFFFFFF);
+            }
+            yOffset += SECTION_HEADER_HEIGHT;
+            absoluteYPosition += SECTION_HEADER_HEIGHT;
+
+            // Renderizar eventos de esta categoría
+            for (EventViewModel.EventData event : categoryEvents) {
+                int eventHeight = calculateEventHeight(event);
+
+                if (yOffset + eventHeight >= startY && yOffset <= endY) {
+                    yOffset = renderEvent(graphics, event, yOffset, leftMargin, rightMargin, mouseX, mouseY);
                 } else {
-                    yOffset += 110;
+                    yOffset += eventHeight;
                 }
-                yOffset += 10;
-            }
-            yOffset += 10;
-        }
 
-        if (!available.isEmpty()) {
-            if (yOffset > startY - 15 && yOffset < endY) {
-                graphics.drawString(this.font, "§f§lAVAILABLE", 45, yOffset, 0xFFFFFF);
+                absoluteYPosition += eventHeight;
+                yOffset += CARD_GAP;
+                absoluteYPosition += CARD_GAP;
             }
-            yOffset += 15;
 
-            for (EventViewModel.EventData event : available) {
-                if (yOffset + 80 > startY && yOffset < endY) {
-                    yOffset = renderEvent(graphics, event, yOffset);
-                } else {
-                    yOffset += 80;
-                }
-                yOffset += 10;
-            }
-            yOffset += 10;
-        }
-
-        if (!completed.isEmpty()) {
-            if (yOffset > startY - 15 && yOffset < endY) {
-                graphics.drawString(this.font, "§a§lCOMPLETED", 45, yOffset, 0xFFFFFF);
-            }
-            yOffset += 15;
-
-            for (EventViewModel.EventData event : completed) {
-                if (yOffset + 70 > startY && yOffset < endY) {
-                    yOffset = renderEvent(graphics, event, yOffset);
-                } else {
-                    yOffset += 70;
-                }
-                yOffset += 10;
-            }
+            yOffset += SECTION_PADDING;
+            absoluteYPosition += SECTION_PADDING;
         }
 
         graphics.disableScissor();
     }
 
     /**
-     * FASE 3: Indicador visual de scroll en el lado derecho.
+     * Obtiene el nombre de display de una categoría.
      */
+    private String getCategoryDisplayName(String category) {
+        return switch (category.toLowerCase()) {
+            case "mining" -> "Minería";
+            case "combat" -> "Combate";
+            case "farming" -> "Granja";
+            case "exploration" -> "Exploración";
+            case "tutorial" -> "Tutorial";
+            case "alchemy" -> "Alquimia";
+            case "collecting" -> "Colección";
+            case "construction" -> "Construcción";
+            case "crafting" -> "Crafteo";
+            case "enchanting" -> "Encantamiento";
+            case "survival" -> "Supervivencia";
+            case "taming" -> "Domesticación";
+            case "progression" -> "Progresión";
+            case "interact" -> "Interacción";
+            default -> category;
+        };
+    }
+
+
+    /**
+     * Obtiene el color de una categoría.
+     */
+    private int getCategoryColor(String category) {
+        return switch (category.toLowerCase()) {
+            case "alchemy" -> 0xFFFF00FF;       // Magenta
+            case "collecting" -> 0xFF00FFFF;    // Cyan
+            case "construction" -> 0xFF00FF00;  // Green
+            case "crafting" -> 0xFF3333FF;      // Blue
+            case "enchanting" -> 0xFFCC9900;    // Gold
+            case "mining" -> 0xFF666666;        // Gray
+            case "combat" -> 0xFFDD0000;        // Red
+            case "farming" -> 0xFF00AA00;       // Dark Green
+            case "building" -> 0xFFFFAA00;      // Orange
+            case "exploration" -> 0xFF5555FF;   // Purple
+            case "tutorial" -> 0xFF00DDDD;      // Light Cyan
+            case "survival" -> 0xFFFF5555;      // Light Red
+            case "taming" -> 0xFFFFDD55;        // Yellow
+            case "progression" -> 0xFFFFAA55;   // Golden Orange
+            case "interact" -> 0xFF55AAFF;      // Light Blue
+            default -> 0xFF888888;              // Medium Gray
+        };
+    }
+
+
+    /**
+     * Obtiene el icono/inicial de una categoría para el mini-nav.
+     */
+    private String getCategoryInitial(String category) {
+        return switch (category.toLowerCase()) {
+            case "mining" -> "⛏";          // Pickaxe
+            case "combat" -> "⚔";          // Sword
+            case "farming" -> "🌾";        // Wheat
+            case "building" -> "🏗";       // Building
+            case "exploration" -> "🧭";    // Compass
+            case "tutorial" -> "📖";       // Book
+            case "alchemy" -> "⚗";         // Alembic
+            case "collecting" -> "📦";     // Box
+            case "construction" -> "🔨";   // Hammer
+            case "crafting" -> "🔧";       // Wrench
+            case "enchanting" -> "✨";     // Sparkles
+            case "survival" -> "❤";        // Heart
+            case "taming" -> "🐾";         // Paw prints
+            case "progression" -> "⭐";    // Star
+            case "interact" -> "👋";       // Hand wave
+            default -> category.substring(0, 1).toUpperCase();
+        };
+    }
+
+
+
+
+
+
+
     private void renderScrollIndicator(GuiGraphics graphics) {
         int barX = this.width - 10;
         int barY = TOP_MARGIN;
@@ -275,60 +858,526 @@ public class EventScreen extends Screen {
 
         graphics.fill(barX, indicatorY, barX + barWidth, indicatorY + indicatorHeight, 0xFFFFAA00);
     }
+    /**
+     * Renderiza gradientes de fade en los bordes del área scrolleable.
+     */
+    private void renderScrollFadeGradients(GuiGraphics graphics) {
+        int fadeHeight = 20; // Altura del gradiente (ajustable)
+        int leftMargin = 0;
+        int rightMargin = this.width;
 
-    private int renderEvent(GuiGraphics graphics, EventViewModel.EventData event, int y) {
-        int leftMargin = 40;
-        int rightMargin = this.width - 20;
+        // ========== GRADIENTE SUPERIOR ==========
+        // De negro opaco (arriba) a transparente (abajo)
+        int topY = TOP_MARGIN;
 
-        int eventHeight = 60;
-        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
-            eventHeight += 24;
-            if (event.currentObjectiveDescription != null) {
-                eventHeight += 12;
+        for (int i = 0; i < fadeHeight; i++) {
+            float alpha = 1.0f - ((float) i / fadeHeight); // 1.0 → 0.0
+            int alphaValue = (int)(alpha * 200); // 200 = opacidad máxima (ajustable)
+            int color = (alphaValue << 24); // Negro con alpha variable
+
+            graphics.fill(leftMargin, topY + i, rightMargin, topY + i + 1, color);
+        }
+
+        // ========== GRADIENTE INFERIOR ==========
+        // De transparente (arriba) a negro opaco (abajo)
+        int bottomY = this.height - BOTTOM_MARGIN;
+
+        for (int i = 0; i < fadeHeight; i++) {
+            float alpha = (float) i / fadeHeight; // 0.0 → 1.0
+            int alphaValue = (int)(alpha * 200); // 200 = opacidad máxima
+            int color = (alphaValue << 24); // Negro con alpha variable
+
+            graphics.fill(leftMargin, bottomY - fadeHeight + i, rightMargin, bottomY - fadeHeight + i + 1, color);
+        }
+    }
+
+    private int renderEvent(GuiGraphics graphics, EventViewModel.EventData event, int y, int leftMargin, int rightMargin, int mouseX, int mouseY) {
+        int eventHeight = calculateEventHeight(event);
+
+// ✅ GUARDAR Y ORIGINAL (antes de cualquier modificación)
+        int originalY = y;
+
+// ✅ Calcular bounds usando Y ORIGINAL (sin lift)
+// IMPORTANTE: 'y' ya tiene el scroll aplicado, son coordenadas de pantalla
+        int cardTop = originalY - 5;
+        int cardBottom = originalY + eventHeight;
+        int cardLeft = leftMargin - 5;
+        int cardRight = rightMargin;
+
+// Verificar si el mouse está dentro del área visible (scissor region)
+        boolean isInVisibleArea = mouseY >= TOP_MARGIN && mouseY <= (this.height - BOTTOM_MARGIN);
+
+// Detectar hover directamente (mouseY ya está en coordenadas de pantalla, igual que cardTop/cardBottom)
+        boolean isHovered = isInVisibleArea &&
+                mouseX >= cardLeft && mouseX <= cardRight &&
+                mouseY >= cardTop && mouseY <= cardBottom;
+
+
+        // Actualizar hover alpha con interpolación suave
+        String eventId = event.id;
+        float currentHoverAlpha = cardHoverAlpha.getOrDefault(eventId, 0f);
+        float targetHoverAlpha = isHovered ? 1f : 0f;
+
+        if (Math.abs(currentHoverAlpha - targetHoverAlpha) > 0.01f) {
+            float newAlpha = currentHoverAlpha + (targetHoverAlpha - currentHoverAlpha) * 0.3f;
+            cardHoverAlpha.put(eventId, newAlpha);
+            currentHoverAlpha = newAlpha;
+        }
+
+        // ✅ AHORA SÍ aplicar el lift (DESPUÉS de calcular hover)
+        int liftOffset = (int)(currentHoverAlpha * -3);
+        y += liftOffset;
+
+
+
+
+        boolean isInProgress = event.state == com.eventui.api.event.EventState.IN_PROGRESS;
+        boolean isCompleted = event.state == com.eventui.api.event.EventState.COMPLETED;
+        boolean isLocked = event.isLocked;
+
+        int bgAlpha = isInProgress ? 0xEE : 0xDD;
+        int topColor = (bgAlpha << 24) | (isInProgress ? 0x1A1A0F : isLocked ? 0x1A0F0F : 0x1F1F1F);
+        int bottomColor = (bgAlpha << 24) | (isInProgress ? 0x0F0F08 : isLocked ? 0x0F0505 : 0x0A0A0A);
+
+        renderGradientBox(graphics, leftMargin - 5, y - 5, rightMargin - leftMargin + 5, eventHeight, topColor, bottomColor);
+
+        // Sombra
+        graphics.fill(leftMargin - 3, y + eventHeight - 2, rightMargin - 2, y + eventHeight, 0x44000000);
+// ✅ NUEVO: Glow border cuando hay hover
+        if (currentHoverAlpha > 0.01f) {
+            int glowAlpha = (int)(currentHoverAlpha * 100);
+            int glowColor = (glowAlpha << 24) | 0xFFAA00; // Naranja/dorado
+
+            // Borde superior
+            graphics.fill(leftMargin - 6, y - 6, rightMargin + 1, y - 5, glowColor);
+            // Borde inferior
+            graphics.fill(leftMargin - 6, y + eventHeight, rightMargin + 1, y + eventHeight + 1, glowColor);
+            // Borde izquierdo
+            graphics.fill(leftMargin - 6, y - 6, leftMargin - 5, y + eventHeight + 1, glowColor);
+            // Borde derecho
+            graphics.fill(rightMargin, y - 6, rightMargin + 1, y + eventHeight + 1, glowColor);
+        }
+        // ✅ Overlay oscuro si está bloqueado
+        if (isLocked) {
+            graphics.fill(leftMargin - 5, y - 5, rightMargin, y + eventHeight, 0x66000000);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // RENDERIZAR ICONO + TÍTULO + BADGES (COMÚN PARA TODOS)
+        // ═══════════════════════════════════════════════════════
+
+        // Icon del evento
+        net.minecraft.world.item.ItemStack iconStack = parseItemStack(event.icon);
+        if (!iconStack.isEmpty()) {
+            if (isLocked) {
+                graphics.fill(leftMargin - 2, y - 4, leftMargin + 18, y + 16, 0x66000000);
             }
+            graphics.renderItem(iconStack, leftMargin, y - 2);
         }
 
-        graphics.fill(leftMargin - 5, y - 5, rightMargin, y + eventHeight, 0xDD222222);
-        graphics.fill(leftMargin - 5, y - 5, rightMargin, y - 4, 0xFFFFAA00);
+        // Candado sobre el icono si está bloqueado
+        if (isLocked) {
+            graphics.drawString(this.font, "§c🔒", leftMargin + 10, y + 6, 0xFFFFFF, true);
+        }
 
-        String titleColor = switch (event.state) {
-            case IN_PROGRESS -> "§e";
-            case COMPLETED -> "§a";
-            case AVAILABLE -> "§f";
-            case LOCKED -> "§8";
-            default -> "§7";
-        };
+        // Título con badges
+        String title = event.displayName;
+        int titleX = leftMargin + 18;
+        graphics.drawString(this.font, title, titleX, y - 2, isLocked ? 0xCCCCCC : 0xFFFFFF, true);
 
-        graphics.drawString(this.font, titleColor + "● " + event.displayName, leftMargin, y, 0xFFFFFF);
+        int badgeX = titleX + this.font.width(title) + 5;
+        badgeX = renderBadge(graphics, badgeX, y - 2, event.category, getBadgeColor(event.category));
+        badgeX = renderBadge(graphics, badgeX, y - 2, event.difficulty, getDifficultyColor(event.difficulty));
+
         y += 12;
 
-        graphics.drawString(this.font, "§7" + event.description, leftMargin + 10, y, 0xFFFFFF);
-        y += 12;
+        // ═══════════════════════════════════════════════════════
+        // CONTENIDO ESPECÍFICO: LOCKED vs NORMAL
+        // ═══════════════════════════════════════════════════════
 
-        if (event.currentObjectiveDescription != null &&
-                (event.state == com.eventui.api.event.EventState.AVAILABLE ||
-                        event.state == com.eventui.api.event.EventState.IN_PROGRESS)) {
-            graphics.drawString(this.font, "§e→ " + event.currentObjectiveDescription, leftMargin + 10, y, 0xFFFFFF);
+        if (isLocked) {
+            // ─────────────────────────────────────
+            // EVENTO LOCKED: Mostrar requisitos
+            // ─────────────────────────────────────
+
+            int leftColumnX = leftMargin + 10;
+            int rightColumnX = leftMargin + (rightMargin - leftMargin) / 2 + 20;
+
+            // Columna IZQUIERDA: "LOCKED"
+            graphics.drawString(this.font, "§c🔒 LOCKED", leftColumnX, y, 0xFFFFFF, true);
+
+            // Columna DERECHA: "Complete first:" + lista
+            List<String> missingDeps = getMissingDependencyNames(event.dependencies);
+            if (!missingDeps.isEmpty()) {
+                graphics.drawString(this.font, "§7Complete first:", rightColumnX, y, 0xFFFFFF);
+                y += 12;
+
+                for (String depName : missingDeps) {
+                    // Truncar si es muy largo
+                    String displayName = depName;
+                    int maxWidth = rightMargin - rightColumnX - 15;
+                    if (this.font.width("  • " + displayName) > maxWidth) {
+                        while (this.font.width("  • " + displayName + "...") > maxWidth && displayName.length() > 5) {
+                            displayName = displayName.substring(0, displayName.length() - 1);
+                        }
+                        displayName += "...";
+                    }
+
+                    graphics.drawString(this.font, "  §e• " + displayName, rightColumnX, y, 0xFFFFFF);
+                    y += 12;
+                }
+            } else {
+                y += 12;
+            }
+            y += 10;
+        } else {
+            // ─────────────────────────────────────
+            // EVENTO NORMAL: Descripción, objetivos, progreso, botones
+            // ─────────────────────────────────────
+
+            // Descripción
+            graphics.drawString(this.font, "§7" + event.description, leftMargin + 10, y, 0xFFFFFF);
             y += 12;
+
+            // Objetivo y rewards (AVAILABLE o IN_PROGRESS)
+            if (event.currentObjectiveDescription != null &&
+                    (event.state == com.eventui.api.event.EventState.AVAILABLE ||
+                            event.state == com.eventui.api.event.EventState.IN_PROGRESS)) {
+                graphics.drawString(this.font, "§e→ " + event.currentObjectiveDescription, leftMargin + 10, y, 0xFFFFFF);
+                y += 12;
+
+                if (event.hasRewards()) {
+                    y = renderRewardsVisual(graphics, event, leftMargin + 10, y) + 12;
+                }
+            }
+
+            // Progress bar (solo IN_PROGRESS)
+            if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
+                // ✅ Obtener progreso animado (o inicializar con progreso real)
+                eventId = event.id;
+                float currentAnimatedProgress = animatedProgress.getOrDefault(eventId, event.getProgressPercentage());
+
+                // Asegurar que el progreso animado existe en el map
+                if (!animatedProgress.containsKey(eventId)) {
+                    animatedProgress.put(eventId, event.getProgressPercentage());
+                }
+
+                String progressText = String.format("Progress: %d/%d (%d%%)",
+                        event.currentProgress, event.targetProgress, (int)(event.getProgressPercentage() * 100));
+                graphics.drawString(this.font, "§6" + progressText, leftMargin + 10, y, 0xFFFFFF);
+                y += 12;
+
+                int barWidth = rightMargin - leftMargin - 20;
+                int barHeight = 6;
+                int barX = leftMargin + 10;
+
+                // Fondo de la barra
+                graphics.fill(barX, y, barX + barWidth, y + barHeight, 0xFF222222);
+
+                // ✅ Usar progreso ANIMADO en lugar del progreso real
+                int fillWidth = (int) (barWidth * currentAnimatedProgress);
+                if (fillWidth > 0) {
+                    // ✅ Color gradual según progreso
+                    int barColor;
+                    if (currentAnimatedProgress >= 0.9f) {
+                        barColor = 0xFF00AA00; // Verde cuando está casi completo
+                    } else if (currentAnimatedProgress >= 0.5f) {
+                        barColor = 0xFFFFAA00; // Naranja normal
+                    } else {
+                        barColor = 0xFFFFCC00; // Amarillo al inicio
+                    }
+
+                    graphics.fill(barX, y, barX + fillWidth, y + barHeight, barColor);
+
+                    // ✅ NUEVO: Efecto de brillo en el borde derecho de la barra
+                    if (fillWidth > 2 && currentAnimatedProgress < 0.99f) {
+                        int glowColor = 0x88FFFFFF; // Blanco semi-transparente
+                        graphics.fill(barX + fillWidth - 2, y, barX + fillWidth, y + barHeight, glowColor);
+                    }
+                }
+
+                y += barHeight + 6;
+            }
+
+
+            // Botones (solo si no está bloqueado)
+            y = renderEventButtons(graphics, event, y, leftMargin, rightMargin, mouseX, mouseY);
         }
 
-        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
-            String progressText = String.format("§6Progress: %d/%d (%.0f%%)",
-                    event.currentProgress, event.targetProgress, event.getProgressPercentage() * 100);
+        // ═══════════════════════════════════════════════════════
+        // LÍNEA DIVISORIA
+        // ═══════════════════════════════════════════════════════
 
-            graphics.drawString(this.font, progressText, leftMargin + 10, y, 0xFFFFFF);
-            y += 12;
+        graphics.fill(leftMargin - 5, y, rightMargin, y + 1, 0x33FFFFFF);
+        y += 2;
 
-            renderProgressBar(graphics, leftMargin + 10, y, 200, 8, event.getProgressPercentage());
-            y += 12;
-        } else if (event.state == com.eventui.api.event.EventState.COMPLETED) {
-            graphics.drawString(this.font, "§a✓ COMPLETED", leftMargin + 10, y, 0xFFFFFF);
-            y += 12;
-        }
-
-        y += 15;
         return y;
     }
+
+
+
+    /**
+     * Renderiza botones y retorna la nueva posición Y.
+     */
+    private int renderEventButtons(GuiGraphics graphics, EventViewModel.EventData event,
+                                   int y, int leftMargin, int rightMargin, int mouseX, int mouseY) {
+        int buttonHeight = 18;
+        int buttonSpacing = 8;
+        int button1Width = 70;
+        int button2Width = 80;
+
+        ButtonState btn1 = getButton1State(event);
+        renderSingleButton(graphics, leftMargin + 10, y, button1Width, buttonHeight,
+                btn1.text, btn1.color, btn1.enabled, btn1.action, mouseX, mouseY);
+
+        ButtonState btn2 = getButton2State(event);
+        renderSingleButton(graphics, leftMargin + 10 + button1Width + buttonSpacing, y, button2Width, buttonHeight,
+                btn2.text, btn2.color, btn2.enabled, btn2.action, mouseX, mouseY);
+
+        return y + buttonHeight + 6; // ✅ RETORNAR nueva posición Y
+    }
+
+
+    private ButtonState getButton1State(EventViewModel.EventData event) {
+        return switch (event.state) {
+            case AVAILABLE -> new ButtonState(
+                    "Iniciar",
+                    0xFF00AA00,
+                    true,
+                    () -> handleStartEvent(event)
+            );
+
+            case IN_PROGRESS -> new ButtonState(
+                    "En progreso",
+                    0xFF444444,
+                    false,
+                    null
+            );
+
+            case COMPLETED -> {
+                if (event.repeatable) {
+                    yield new ButtonState(
+                            "Reiniciar",
+                            0xFFFFAA00,
+                            true,
+                            () -> handleStartEvent(event)
+                    );
+                } else {
+                    yield new ButtonState(
+                            "Completado",
+                            0xFF444444,
+                            false,
+                            null
+                    );
+                }
+            }
+
+            case FAILED -> new ButtonState(
+                    "Fallido",
+                    0xFF662222,
+                    false,
+                    null
+            );
+
+            default -> new ButtonState(
+                    "---",
+                    0xFF333333,
+                    false,
+                    null
+            );
+        };
+    }
+
+    private ButtonState getButton2State(EventViewModel.EventData event) {
+        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
+            return new ButtonState(
+                    "Abandonar",
+                    0xFFDD0000,
+                    true,
+                    () -> handleAbandonEvent(event)
+            );
+        } else {
+            return new ButtonState(
+                    "Abandonar",
+                    0xFF333333,
+                    false,
+                    null
+            );
+        }
+    }
+
+    private void renderSingleButton(GuiGraphics graphics, int x, int y, int width, int height,
+                                    String text, int baseColor, boolean enabled, Runnable action,
+                                    int mouseX, int mouseY) {
+
+        // Detectar hover
+        boolean isHovered = enabled && mouseX >= x && mouseX <= x + width &&
+                mouseY >= y && mouseY <= y + height;
+
+        // ✅ NUEVO: ID único del botón (basado en posición + texto)
+        String buttonId = x + "_" + y + "_" + text;
+
+        // ✅ Obtener scale actual o default
+        float currentScale = buttonHoverScale.getOrDefault(buttonId, 1.0f);
+        float targetScale = isHovered ? 1.06f : 1.0f; // 6% más grande en hover
+
+        // ✅ Interpolar suavemente hacia el target
+        if (Math.abs(currentScale - targetScale) > 0.005f) { // Threshold más alto
+            float diff = targetScale - currentScale;
+            currentScale += diff * 0.3f;
+            buttonHoverScale.put(buttonId, currentScale);
+        } else {
+            // Snap al target para evitar oscilaciones
+            currentScale = targetScale;
+            buttonHoverScale.put(buttonId, currentScale);
+        }
+
+        // ✅ Calcular dimensiones escaladas
+        int scaledWidth = (int)(width * currentScale);
+        int scaledHeight = (int)(height * currentScale);
+
+        // ✅ Centrar el botón escalado
+        int renderX = x - (scaledWidth - width) / 2;
+        int renderY = y - (scaledHeight - height) / 2;
+
+        // Calcular color de fondo
+        int bgColor;
+        if (!enabled) {
+            bgColor = 0xAA222222;
+        } else if (isHovered) {
+            bgColor = baseColor | 0xFF000000; // Color base opaco
+        } else {
+            bgColor = (baseColor & 0x00FFFFFF) | 0xCC000000; // Color base semi-transparente
+        }
+
+        // ✅ Aplicar transformación con pushPose
+        graphics.pose().pushPose();
+
+        // Dibujar fondo
+        graphics.fill(renderX, renderY, renderX + scaledWidth, renderY + scaledHeight, bgColor);
+
+        // ✅ Glow effect cuando hover (más intenso con la animación)
+        if (isHovered && enabled && currentScale > 1.01f) {
+            int glowIntensity = (int)((currentScale - 1.0f) * 15 * 255); // 0-255
+            int glowColor = (Math.min(glowIntensity, 150) << 24) | 0xFFFFFF; // Blanco con alpha
+
+            // Glow superior
+            graphics.fill(renderX - 1, renderY - 1, renderX + scaledWidth + 1, renderY, glowColor);
+            // Glow inferior
+            graphics.fill(renderX - 1, renderY + scaledHeight, renderX + scaledWidth + 1, renderY + scaledHeight + 1, glowColor);
+            // Glow izquierdo
+            graphics.fill(renderX - 1, renderY, renderX, renderY + scaledHeight, glowColor);
+            // Glow derecho
+            graphics.fill(renderX + scaledWidth, renderY, renderX + scaledWidth + 1, renderY + scaledHeight, glowColor);
+        }
+
+        // Bordes normales (si no hay hover)
+        if (enabled && !isHovered) {
+            graphics.fill(renderX, renderY, renderX + scaledWidth, renderY + 1, 0xFFFFFFFF);
+            graphics.fill(renderX, renderY + scaledHeight - 1, renderX + scaledWidth, renderY + scaledHeight, 0xFF666666);
+        }
+
+        // ✅ Texto centrado en el botón escalado
+        int textColor = enabled ? 0xFFFFFFFF : 0xFF666666;
+        int textX = renderX + (scaledWidth / 2) - (this.font.width(text) / 2);
+        int textY = renderY + (scaledHeight / 2) - 4;
+
+        // Shadow en hover
+        graphics.drawString(this.font, text, textX, textY, textColor, isHovered && enabled);
+
+        graphics.pose().popPose();
+
+        // Registrar como clickeable si está habilitado (usar bounds ORIGINALES para clicks)
+        if (enabled && action != null) {
+            clickableButtons.add(new ClickableButton(x, y, width, height, action));
+        }
+    }
+
+
+    private void handleAbandonEvent(EventViewModel.EventData event) {
+        if (event.repeatable) {
+            executeAbandonEvent(event);
+            return;
+        }
+
+        LOGGER.info("Event is not repeatable, showing confirmation dialog");
+
+        ConfirmAbandonScreen confirmScreen = new ConfirmAbandonScreen(
+                this,
+                event.displayName,
+                () -> executeAbandonEvent(event)
+        );
+
+        Minecraft.getInstance().setScreen(confirmScreen);
+    }
+
+    private void executeAbandonEvent(EventViewModel.EventData event) {
+        assert Minecraft.getInstance().player != null;
+        UUID playerId = Minecraft.getInstance().player.getUUID();
+
+        Map<String, String> payload = Map.of(
+                "button_id", "abandon-button-" + event.id,
+                "action", "abandon_event",
+                "event_id", event.id
+        );
+
+        com.eventui.api.bridge.BridgeMessage message = new BridgeMessageImpl(
+                MessageType.UI_BUTTON_CLICKED,
+                payload,
+                playerId
+        );
+
+        ClientEventBridge.getInstance().sendMessage(message);
+
+        LOGGER.info("Sent abandon_event action to server for: {}", event.id);
+
+        if (Minecraft.getInstance().player != null) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    Component.literal("§cAbandoning event: §f" + event.displayName),
+                    true
+            );
+        }
+    }
+
+    private record ButtonState(String text, int color, boolean enabled, Runnable action) {
+    }
+
+    private void handleStartEvent(EventViewModel.EventData event) {
+        assert Minecraft.getInstance().player != null;
+        UUID playerId = Minecraft.getInstance().player.getUUID();
+
+        Map<String, String> payload = Map.of(
+                "button_id", "start-button-" + event.id,
+                "action", "start_event",
+                "event_id", event.id
+        );
+
+        com.eventui.api.bridge.BridgeMessage message = new BridgeMessageImpl(
+                MessageType.UI_BUTTON_CLICKED,
+                payload,
+                playerId
+        );
+
+        ClientEventBridge.getInstance().sendMessage(message);
+
+        LOGGER.info("Sent start_event action to server for: {}", event.id);
+
+        // ✅ FASE 4.2: Sonido y feedback al iniciar
+        if (Minecraft.getInstance().player != null) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    Component.literal("§eStarting event: §f" + event.displayName),
+                    true
+            );
+
+            // Sonido de inicio
+            Minecraft.getInstance().player.playSound(
+                    net.minecraft.sounds.SoundEvents.UI_BUTTON_CLICK.value(),
+                    1.0f,
+                    1.0f
+            );
+        }
+    }
+
 
     private void renderProgressBar(GuiGraphics graphics, int x, int y, int width, int height, float progress) {
         graphics.fill(x, y, x + width, y + height, 0xFF1A1A1A);
@@ -345,14 +1394,583 @@ public class EventScreen extends Screen {
 
     @Override
     public void onClose() {
+        // ✅ Detener animaciones
+        animationManager.stopAll();
+
         if (viewModel != null) {
             viewModel.removeChangeListener(this::onEventsUpdated);
         }
         super.onClose();
     }
 
+
     @Override
     public boolean isPauseScreen() {
         return false;
     }
+
+    private static class ClickableButton {
+        private final int x, y, width, height;
+        private final Runnable onClick;
+
+        public ClickableButton(int x, int y, int width, int height, Runnable onClick) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.onClick = onClick;
+        }
+
+        public boolean isMouseOver(double mouseX, double mouseY) {
+            return mouseX >= x && mouseX <= x + width &&
+                    mouseY >= y && mouseY <= y + height;
+        }
+
+        public void onClick() {
+            this.onClick.run();
+        }
+    }
+
+    private net.minecraft.world.item.ItemStack parseItemStack(String itemId) {
+        try {
+            if (itemId == null || !itemId.contains(":")) {
+                LOGGER.warn("Invalid item ID format: {}", itemId);
+                return new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.PAPER);
+            }
+
+            net.minecraft.resources.ResourceLocation location;
+            try {
+                location = net.minecraft.resources.ResourceLocation.tryParse(itemId);
+            } catch (Exception e) {
+                LOGGER.warn("Failed to parse ResourceLocation: {}", itemId);
+                return new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.PAPER);
+            }
+
+            if (location == null) {
+                LOGGER.warn("Invalid ResourceLocation: {}", itemId);
+                return new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.PAPER);
+            }
+
+            net.minecraft.world.item.Item item =
+                    net.minecraft.core.registries.BuiltInRegistries.ITEM.get(location);
+
+            if (item != null && item != net.minecraft.world.item.Items.AIR) {
+                return new net.minecraft.world.item.ItemStack(item);
+            }
+
+        } catch (Exception e) {
+            LOGGER.warn("Exception parsing item: {} - {}", itemId, e.getMessage());
+        }
+
+        return new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.PAPER);
+    }
+
+    // ✅ CORREGIDO: Problema 2 - Badges más grandes
+    private int renderBadge(GuiGraphics graphics, int x, int y, String text, int color) {
+        int padding = 4; // ← Aumentado de 3 a 4
+        int width = this.font.width(text) + padding * 2;
+        int height = 11; // ← Aumentado de 10 a 11
+
+        graphics.fill(x, y, x + width, y + height, color);
+
+        graphics.fill(x, y, x + width, y + 1, 0x88FFFFFF);
+        graphics.fill(x, y + height - 1, x + width, y + height, 0x88000000);
+
+        graphics.drawString(this.font, text, x + padding, y + 2, 0xFFFFFFFF, false);
+
+        return x + width;
+    }
+
+    private int getDifficultyColor(String difficulty) {
+        return switch (difficulty.toLowerCase()) {
+            case "easy" -> 0xCC00AA00;
+            case "medium" -> 0xCCFFAA00;
+            case "hard" -> 0xCCDD0000;
+            case "expert" -> 0xCC5500AA;
+            default -> 0xCC666666;
+        };
+    }
+
+    private String parseRewardsText(String rewardsJson) {
+        try {
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            java.util.Map<String, Object> rewards = gson.fromJson(rewardsJson,
+                    new com.google.gson.reflect.TypeToken<java.util.Map<String, Object>>(){}.getType());
+
+            java.util.List<String> parts = new java.util.ArrayList<>();
+
+            if (rewards.containsKey("xp")) {
+                parts.add(rewards.get("xp") + " XP");
+            }
+
+            if (rewards.containsKey("items")) {
+                java.util.List<String> items = (java.util.List<String>) rewards.get("items");
+                for (String item : items) {
+                    String[] split = item.split(" ");
+                    if (split.length >= 2) {
+                        parts.add(split[1] + "x " + split[0].replace("minecraft:", ""));
+                    }
+                }
+            }
+
+            return String.join(" • ", parts);
+
+        } catch (Exception e) {
+            return "???";
+        }
+    }
+
+    private String formatElapsedTime(long millis) {
+        long seconds = millis / 1000;
+
+        if (seconds < 60) {
+            return seconds + "s";
+        } else if (seconds < 3600) {
+            return (seconds / 60) + "m";
+        } else if (seconds < 86400) {
+            return (seconds / 3600) + "h";
+        } else {
+            return (seconds / 86400) + "d";
+        }
+    }
+    /**
+     * ✅ FASE 1.3: Renderiza recompensas como iconos visuales.
+     */
+    private int renderRewardsVisual(GuiGraphics graphics, EventViewModel.EventData event, int x, int y) {
+        graphics.drawString(this.font, "§6🎁 Rewards:", x, y, 0xFFFFFF);
+
+        int iconX = x + this.font.width("🎁 Rewards: ") + 8;
+        int startY = y;
+
+        try {
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            java.util.Map<String, Object> rewards = gson.fromJson(event.rewardsJson,
+                    new com.google.gson.reflect.TypeToken<java.util.Map<String, Object>>(){}.getType());
+
+            // Renderizar XP si existe
+            if (rewards.containsKey("xp")) {
+                int xpAmount = ((Number) rewards.get("xp")).intValue();
+
+                // Icono de XP (botella de experiencia)
+                net.minecraft.world.item.ItemStack xpBottle =
+                        new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.EXPERIENCE_BOTTLE);
+                graphics.renderItem(xpBottle, iconX, y - 2);
+
+                // Cantidad
+                graphics.drawString(this.font, "§a+" + xpAmount, iconX + 18, y + 4, 0xFFFFFF, true);
+                iconX += 70;
+            }
+
+            // Renderizar items si existen
+            if (rewards.containsKey("items")) {
+                java.util.List<String> items = (java.util.List<String>) rewards.get("items");
+
+                for (String itemStr : items) {
+                    try {
+                        String[] parts = itemStr.trim().split(" ");
+                        String itemId = parts[0];
+                        int amount = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+
+                        // Parsear y renderizar item
+                        net.minecraft.world.item.ItemStack itemStack = parseItemStack(itemId);
+
+                        if (!itemStack.isEmpty()) {
+                            // Fondo sutil para el icono
+                            graphics.fill(iconX - 1, y - 3, iconX + 17, y + 15, 0x44000000);
+
+                            // Item icon
+                            graphics.renderItem(itemStack, iconX, y - 2);
+
+                            // Cantidad en esquina inferior derecha
+                            String amountText = "§fx" + amount;
+                            graphics.drawString(this.font, amountText, iconX + 18, y + 4, 0xFFFFFF, true);
+
+                            iconX += 50;
+                        }
+                    } catch (Exception e) {
+                        LOGGER.warn("Failed to render reward item: {}", itemStr);
+                    }
+                }
+            }
+
+            return startY;
+
+        } catch (Exception e) {
+            LOGGER.warn("Failed to render rewards visual: {}", e.getMessage());
+            // Fallback al texto
+            String rewardsText = parseRewardsText(event.rewardsJson);
+            graphics.drawString(this.font, "§f" + rewardsText, iconX, y, 0xFFFFFF);
+            return startY;
+        }
+    }
+    /**
+     * ✅ CORREGIDO: Renderiza barra de progreso global (basada en filteredEvents si hay búsqueda).
+     */
+    private void renderGlobalProgress(GuiGraphics graphics) {
+        // Calcular stats de la lista COMPLETA (no filtrada)
+        completedCount = 0;
+        inProgressCount = 0;
+        availableCount = 0;
+        int totalEvents = events.size();
+
+        for (EventViewModel.EventData event : events) {
+            switch (event.state) {
+                case COMPLETED -> completedCount++;
+                case IN_PROGRESS -> inProgressCount++;
+                case AVAILABLE -> availableCount++;
+            }
+        }
+
+        if (totalEvents == 0) return;
+
+        float globalProgress = (float) completedCount / totalEvents;
+
+        // Layout horizontal
+        int centerX = this.width / 2;
+        int barY = 52;
+        int barWidth = 140;
+        int barHeight = 8;
+        int barX = centerX - (barWidth / 2);
+
+        // Label a la izquierda
+        String label = "§7Progress:";
+        int labelWidth = this.font.width(label);
+        graphics.drawString(this.font, label, barX - labelWidth - 8, barY, 0xFFFFFF);
+
+        // Fondo de la barra
+        graphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFF0A0A0A);
+
+        // Relleno
+        int fillWidth = (int) (barWidth * globalProgress);
+        if (fillWidth > 0) {
+            graphics.fill(barX, barY, barX + fillWidth, barY + barHeight, 0xFF00DD00);
+            graphics.fill(barX, barY, barX + fillWidth, barY + 2, 0x8800FF00);
+        }
+
+        // Borde
+        graphics.fill(barX, barY, barX + barWidth, barY + 1, 0xFF444444);
+        graphics.fill(barX, barY + barHeight - 1, barX + barWidth, barY + barHeight, 0xFF222222);
+        graphics.fill(barX, barY, barX + 1, barY + barHeight, 0xFF444444);
+        graphics.fill(barX + barWidth - 1, barY, barX + barWidth, barY + barHeight, 0xFF444444);
+
+        // Porcentaje
+        String percentText = String.format("§a%.0f%%", globalProgress * 100);
+        graphics.drawString(this.font, percentText, barX + barWidth + 8, barY, 0xFFFFFF, true);
+
+        // Info adicional
+        String statsText = String.format("§7%d/%d completed", completedCount, totalEvents);
+        int statsWidth = this.font.width(statsText);
+        graphics.drawString(this.font, statsText, centerX - (statsWidth / 2), barY + 12, 0xFFFFFF);
+    }
+
+
+    /**
+     *  Renderiza panel de estadísticas en el header.
+     */
+    private void renderStatsPanel(GuiGraphics graphics) {
+        int panelY = 25;
+        int panelCenterX = this.width / 2;
+
+        // Calcular counts (incluyendo locked)
+        int lockedCount = 0;
+        for (EventViewModel.EventData event : events) {
+            if (event.isLocked) {
+                lockedCount++;
+            }
+        }
+
+        // Fondo del panel
+        int panelWidth = 370;
+        int panelHeight = 22;
+        int panelX = panelCenterX - panelWidth / 2;
+
+        graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, 0xCC1A1A1A);
+        graphics.fill(panelX, panelY, panelX + panelWidth, panelY + 1, 0xFF333333);
+
+        // Tabs dentro del panel (4 tabs)
+        int boxWidth = 85;
+        int boxSpacing = 5;
+        int startX = panelX + 5;
+
+        // ✅ Tab 1: Completados
+        renderTabBox(graphics, startX, panelY + 3, boxWidth,
+                "Completados", completedCount, 0xFF00AA00,
+                TabFilter.COMPLETED);
+
+        // ✅ Tab 2: En progreso
+        renderTabBox(graphics, startX + (boxWidth + boxSpacing), panelY + 3, boxWidth,
+                "En progreso", inProgressCount, 0xFFFFAA00,
+                TabFilter.IN_PROGRESS);
+
+        // ✅ Tab 3: Disponibles
+        renderTabBox(graphics, startX + (boxWidth + boxSpacing) * 2, panelY + 3, boxWidth,
+                "Disponibles", availableCount, 0xFF666666,
+                TabFilter.AVAILABLE);
+
+        // ✅ Tab 4: Bloqueados
+        renderTabBox(graphics, startX + (boxWidth + boxSpacing) * 3, panelY + 3, boxWidth,
+                "Bloqueados", lockedCount, 0xFF444444,
+                TabFilter.LOCKED);
+    }
+
+    /**
+     * Renderiza una tab individual con estado activo/hover y clickeable.
+     */
+    private void renderTabBox(GuiGraphics graphics, int x, int y, int width,
+                              String label, int value, int color, TabFilter tabType) {
+        int height = 16;
+
+        // ✅ Detectar hover
+        int mouseX = (int) this.minecraft.mouseHandler.xpos() * this.width / this.minecraft.getWindow().getGuiScaledWidth();
+        int mouseY = (int) this.minecraft.mouseHandler.ypos() * this.height / this.minecraft.getWindow().getGuiScaledHeight();
+
+        boolean isHovered = mouseX >= x && mouseX <= x + width &&
+                mouseY >= y && mouseY <= y + height;
+
+        // ✅ Detectar si es la tab activa
+        boolean isActive = this.activeTab == tabType;
+
+        // Color de fondo según estado
+        int bgColor;
+        if (isActive) {
+            bgColor = 0xDD000000;  // Más oscuro = activo
+        } else if (isHovered) {
+            bgColor = 0xAA222222;  // Hover
+        } else {
+            bgColor = 0x88000000;  // Normal
+        }
+
+        // Fondo
+        graphics.fill(x, y, x + width, y + height, bgColor);
+
+        // ✅ Borde coloreado (más grueso si está activo)
+        if (isActive) {
+            graphics.fill(x, y, x + width, y + 2, color);  // Borde superior grueso
+
+            // Indicador de tab activa (triángulo hacia abajo)
+            int centerX = x + width / 2;
+            int indicatorY = y + height + 1;
+            graphics.fill(centerX - 3, indicatorY, centerX + 3, indicatorY + 1, color);
+            graphics.fill(centerX - 2, indicatorY + 1, centerX + 2, indicatorY + 2, color);
+            graphics.fill(centerX - 1, indicatorY + 2, centerX + 1, indicatorY + 3, color);
+        } else {
+            graphics.fill(x, y, x + width, y + 1, color);  // Borde normal
+        }
+
+        // ✅ Glow effect en hover
+        if (isHovered && !isActive) {
+            graphics.fill(x - 1, y - 1, x + width + 1, y, 0x44FFFFFF);      // Top
+            graphics.fill(x - 1, y + height, x + width + 1, y + height + 1, 0x44FFFFFF);  // Bottom
+            graphics.fill(x - 1, y, x, y + height, 0x44FFFFFF);             // Left
+            graphics.fill(x + width, y, x + width + 1, y + height, 0x44FFFFFF);  // Right
+        }
+
+        // Label (color gris si está activo para contraste)
+        int labelColor = isActive ? 0xFFFFFFFF : 0xFFCCCCCC;
+        graphics.drawString(this.font, "§7" + label, x + 3, y + 3, labelColor, false);
+
+        // Valor (más grande y coloreado)
+        String valueStr = "§l" + value;
+        int valueWidth = this.font.width(valueStr);
+        int valueColor = isActive ? color : (color & 0xFFFFFF) | 0xCC000000;  // Más opaco si activo
+        graphics.drawString(this.font, valueStr, x + width - valueWidth - 3, y + 3, valueColor, true);
+
+        // ✅ Cursor pointer en hover
+        // (Minecraft no tiene cursor custom, pero podemos agregar feedback visual)
+    }
+
+
+    /**
+     * Renderiza una caja de estadística individual.
+     */
+    private void renderStatBox(GuiGraphics graphics, int x, int y, int width, String label, int value, int color) {
+        int height = 16;
+
+        // Fondo
+        graphics.fill(x, y, x + width, y + height, 0x88000000);
+
+        // Borde coloreado según el tipo
+        graphics.fill(x, y, x + width, y + 1, color);
+
+        // Label
+        graphics.drawString(this.font, "§7" + label, x + 3, y + 3, 0xFFFFFF, false);
+
+        // Valor (grande y coloreado)
+        String valueStr = "§l" + value;
+        int valueWidth = this.font.width(valueStr);
+        graphics.drawString(this.font, valueStr, x + width - valueWidth - 3, y + 3, color, true);
+    }
+    /**
+     * ✅ FASE 1.1: Renderiza un cuadro con gradiente vertical.
+     */
+    private void renderGradientBox(GuiGraphics graphics, int x, int y, int width, int height, int colorTop, int colorBottom) {
+        // Dividir en múltiples franjas horizontales para simular gradiente
+        int strips = Math.min(height, 20);
+        float stripHeight = (float) height / strips;
+
+        for (int i = 0; i < strips; i++) {
+            float ratio = (float) i / strips;
+            int color = blendColors(colorTop, colorBottom, ratio);
+
+            int stripY = y + (int)(i * stripHeight);
+            int nextStripY = y + (int)((i + 1) * stripHeight);
+
+            graphics.fill(x, stripY, x + width, nextStripY, color);
+        }
+    }
+
+    /**
+     * Mezcla dos colores ARGB según un ratio.
+     */
+    private int blendColors(int color1, int color2, float ratio) {
+        int a1 = (color1 >> 24) & 0xFF;
+        int r1 = (color1 >> 16) & 0xFF;
+        int g1 = (color1 >> 8) & 0xFF;
+        int b1 = color1 & 0xFF;
+
+        int a2 = (color2 >> 24) & 0xFF;
+        int r2 = (color2 >> 16) & 0xFF;
+        int g2 = (color2 >> 8) & 0xFF;
+        int b2 = color2 & 0xFF;
+
+        int a = (int)(a1 + (a2 - a1) * ratio);
+        int r = (int)(r1 + (r2 - r1) * ratio);
+        int g = (int)(g1 + (g2 - g1) * ratio);
+        int b = (int)(b1 + (b2 - b1) * ratio);
+
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+    /**
+     * ✅ NUEVO: Callback cuando cambia el texto de búsqueda.
+     */
+    private void onSearchChanged(String query) {
+        this.searchQuery = query.toLowerCase().trim();
+        applyTabFilter();  // ✅ Usar el filtro unificado
+        scrollOffset = 0;
+        targetScrollOffset = 0;
+    }
+
+    /**
+     *  Actualiza la lista filtrada según el searchQuery.
+     */
+    private void updateFilteredEvents() {
+        applyTabFilter();  // ✅ Reutilizar la lógica de filtrado
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Si el search field tiene foco y presionas ESC, limpiarlo primero
+        if (this.searchField.isFocused() && keyCode == 256) { // 256 = ESC
+            this.searchField.setValue("");
+            this.searchField.setFocused(false);
+            return true;
+        }
+
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+    /**
+     * ✅ NUEVO: Obtiene nombres de dependencies faltantes.
+     */
+    private List<String> getMissingDependencyNames(List<String> dependencies) {
+        List<String> names = new ArrayList<>();
+
+        // Obtener eventos completados
+        Set<String> completedIds = new HashSet<>();
+        for (EventViewModel.EventData event : events) {
+            if (event.state == com.eventui.api.event.EventState.COMPLETED) {
+                completedIds.add(event.id);
+            }
+        }
+
+        // Obtener nombres de dependencies faltantes
+        for (String depId : dependencies) {
+            if (!completedIds.contains(depId)) {
+                // Buscar el nombre del evento
+                for (EventViewModel.EventData event : events) {
+                    if (event.id.equals(depId)) {
+                        names.add(event.displayName);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return names;
+    }
+    /**
+     * Calcula la altura EXACTA de un evento basándose en su contenido real.
+     * IMPORTANTE: Este valor DEBE coincidir pixel por pixel con lo que renderiza renderEvent()
+     */
+    private int calculateEventHeight(EventViewModel.EventData event) {
+        int height = 0;
+
+        // 1. Título + badges
+        height += 12;
+
+        if (event.isLocked) {
+            // LOCKED tiene layout especial
+            height += 12;  // "🔒 LOCKED" + "Complete first"
+
+            List<String> missingDeps = getMissingDependencyNames(event.dependencies);
+            height += missingDeps.size() * 12;  // Cada dependency
+
+            if (missingDeps.isEmpty()) {
+                height += 12;  // Espacio extra si no hay deps
+            }
+
+            height += 10;  // Padding final
+            height += 2;   // Línea divisoria
+
+            return height;
+        }
+
+        // 2. Descripción
+        height += 12;
+
+        // 3. Objetivo actual (solo si está AVAILABLE o IN_PROGRESS)
+        if (event.currentObjectiveDescription != null &&
+                (event.state == com.eventui.api.event.EventState.AVAILABLE ||
+                        event.state == com.eventui.api.event.EventState.IN_PROGRESS)) {
+            height += 12;
+        }
+
+        // 4. Rewards visual
+        if (event.hasRewards) {
+            height += 24;  // Altura del renderizado de rewards
+        }
+
+        // 5. Progress bar (solo si está IN_PROGRESS)
+        if (event.state == com.eventui.api.event.EventState.IN_PROGRESS) {
+            height += 12;  // Texto de progreso
+            height += 6;   // Barra
+            height += 6;   // Padding después de la barra
+        }
+
+        // 6. Botones (solo si NO está locked)
+        if (!event.isLocked) {
+            height += 18;  // Altura de botones
+            height += 6;   // Padding después de botones
+        }
+
+        // 7. Línea divisoria final
+        height += 2;
+
+        return height;
+    }
+
+    /**
+     * Obtiene color para badge de categoría.
+     */
+    private int getBadgeColor(String category) {
+        return switch (category.toLowerCase()) {
+            case "tutorial" -> 0xCC00AA00;
+            case "mining" -> 0xCC666666;
+            case "combat" -> 0xCCDD0000;
+            case "farming" -> 0xCC00AA00;
+            case "building" -> 0xCCFFAA00;
+            case "exploration" -> 0xCC5555FF;
+            default -> 0xCC444444;
+        };
+    }
+
 }

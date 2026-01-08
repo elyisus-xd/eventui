@@ -1,4 +1,4 @@
-package com.eventui.core.v2.config;
+package com.eventui.core.config;
 
 import com.eventui.api.ui.UIConfig;
 import com.eventui.api.ui.UIElement;
@@ -9,7 +9,7 @@ import java.util.Map;
 
 /**
  * Implementación de UIConfig.
- * FASE 4A: Configuración de UI declarativa.
+ * Configuración de UI declarativa.
  */
 public record UIConfigImpl(
         String id,

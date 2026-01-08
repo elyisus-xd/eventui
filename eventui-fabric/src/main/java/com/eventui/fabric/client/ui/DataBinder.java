@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 
 /**
  * Vincula datos de eventos con elementos UI.
- * FASE 4B: Data binding dinámico.
+ * Data binding dinámico.
  */
 public class DataBinder {
 
@@ -91,8 +91,11 @@ public class DataBinder {
             case "state" -> event.state.name();
             case "currentProgress", "current_progress" -> event.currentProgress;
             case "targetProgress", "target_progress" -> event.targetProgress;
-            case "currentObjective", "current_objective" -> event.currentObjectiveDescription != null ? event.currentObjectiveDescription : "";
-            case "progressPercentage", "progress_percentage" -> String.format("%.0f", event.getProgressPercentage() * 100);
+            case "currentObjective", "current_objective" ->
+                    event.currentObjectiveDescription != null ? event.currentObjectiveDescription : "";
+            case "progressPercentage", "progress_percentage" ->
+                    String.format("%.0f%%", event.getProgressPercentage() * 100);
+            case "repeatable" -> event.repeatable; // ← NUEVO CASO
             default -> {
                 LOGGER.warn("Unknown event property: {}", property);
                 yield "{{" + property + "}}";

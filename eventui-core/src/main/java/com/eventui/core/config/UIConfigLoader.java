@@ -1,4 +1,4 @@
-package com.eventui.core.v2.config;
+package com.eventui.core.config;
 
 import com.eventui.api.ui.UIConfig;
 import com.eventui.api.ui.UIElement;
@@ -100,7 +100,7 @@ public class UIConfigLoader {
             }
         }
 
-        return new com.eventui.core.v2.config.UIConfigImpl(
+        return new UIConfigImpl(
                 id, title, screenWidth, screenHeight, elements, associatedEventId, screenProperties
         );
     }
@@ -137,7 +137,7 @@ public class UIConfigLoader {
             }
         }
 
-        return new com.eventui.core.v2.config.UIElementImpl(
+        return new UIElementImpl(
                 id, type, x, y, width, height, properties, children, visible, zIndex
         );
     }

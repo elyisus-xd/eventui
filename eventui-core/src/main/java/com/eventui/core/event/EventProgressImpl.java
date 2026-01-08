@@ -1,9 +1,9 @@
-package com.eventui.core.v2.event;
+package com.eventui.core.event;
 
 import com.eventui.api.event.EventProgress;
 import com.eventui.api.event.EventState;
 import com.eventui.api.objective.ObjectiveProgress;
-import com.eventui.core.v2.objective.ObjectiveProgressImpl;
+import com.eventui.core.objective.ObjectiveProgressImpl;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -134,4 +134,6 @@ public class EventProgressImpl implements EventProgress {
         return objectivesProgress.values().stream()
                 .allMatch(ObjectiveProgress::isCompleted);
     }
+
+
 }

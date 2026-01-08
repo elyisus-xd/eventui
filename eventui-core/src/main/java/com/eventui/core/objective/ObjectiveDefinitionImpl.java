@@ -1,4 +1,4 @@
-package com.eventui.core.v2.objective;
+package com.eventui.core.objective;
 
 import com.eventui.api.objective.ObjectiveDefinition;
 import com.eventui.api.objective.ObjectiveType;

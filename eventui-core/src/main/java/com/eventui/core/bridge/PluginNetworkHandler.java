@@ -1,8 +1,8 @@
-package com.eventui.core.v2.bridge;
+package com.eventui.core.bridge;
 
 import com.eventui.api.bridge.BridgeMessage;
 import com.eventui.api.bridge.MessageType;
-import com.eventui.core.v2.EventUIPlugin;
+import com.eventui.core.EventUIPlugin;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.messaging.PluginMessageListener;
 

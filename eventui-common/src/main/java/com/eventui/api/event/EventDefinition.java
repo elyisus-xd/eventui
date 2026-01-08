@@ -1,6 +1,8 @@
 package com.eventui.api.event;
 
 import com.eventui.api.objective.ObjectiveDefinition;
+import com.eventui.api.objective.ObjectiveGroupDefinition;
+
 import java.util.List;
 import java.util.Map;
 
@@ -55,4 +57,21 @@ public interface EventDefinition {
      * @return Mapa inmutable de propiedades custom
      */
     Map<String, String> getMetadata();
+
+    List<String> getDependencies(); // Lista de IDs de eventos prerequisito
+
+
+    /**
+     * @return Lista de grupos de objetivos (puede estar vacía si solo hay objetivos simples)
+     */
+    default List<ObjectiveGroupDefinition> getObjectiveGroups() {
+        return List.of();
+    }
+
+    /**
+     * @return Si el evento tiene grupos compuestos configurados
+     */
+    default boolean hasObjectiveGroups() {
+        return !getObjectiveGroups().isEmpty();
+    }
 }

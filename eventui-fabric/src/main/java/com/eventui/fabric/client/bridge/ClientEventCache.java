@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Caché local de eventos y progreso en el cliente.*
+ * Caché local de eventos y progreso en el cliente.
  * ARQUITECTURA:
  * - Reduce requests al servidor
  * - Mantiene datos sincronizados
@@ -38,7 +38,7 @@ public class ClientEventCache {
         this.eventDefinitions = new ConcurrentHashMap<>();
         this.eventProgress = new ConcurrentHashMap<>();
         this.pendingRequests = new ConcurrentHashMap<>();
-        this.uiConfigs = new ConcurrentHashMap<>(); // ✅ NUEVO
+        this.uiConfigs = new ConcurrentHashMap<>();
     }
 
     /**

@@ -1,6 +1,6 @@
-package com.eventui.core.v2.commands;
+package com.eventui.core.commands;
 
-import com.eventui.core.v2.EventUIPlugin;
+import com.eventui.core.EventUIPlugin;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;

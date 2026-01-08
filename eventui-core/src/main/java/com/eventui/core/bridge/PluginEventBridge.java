@@ -1,4 +1,4 @@
-package com.eventui.core.v2.bridge;
+package com.eventui.core.bridge;
 
 import com.eventui.api.bridge.BridgeMessage;
 import com.eventui.api.bridge.EventBridge;
@@ -9,7 +9,7 @@ import com.eventui.api.event.EventState;
 import com.eventui.api.objective.ObjectiveDefinition;
 import com.eventui.api.objective.ObjectiveProgress;
 import com.eventui.api.ui.UIConfig;
-import com.eventui.core.v2.EventUIPlugin;
+import com.eventui.core.EventUIPlugin;
 import org.bukkit.entity.Player;
 
 import java.util.*;
@@ -94,7 +94,7 @@ public class PluginEventBridge implements EventBridge {
     }
 
     private void registerDefaultHandlers() {
-        // NUEVO: Handler para REQUEST_EVENT_DATA que envía TODOS los eventos
+        // Handler para REQUEST_EVENT_DATA que envía TODOS los eventos
         registerMessageHandler(MessageType.REQUEST_EVENT_DATA, message -> {
             UUID playerId = message.getPlayerId();
 
@@ -106,11 +106,7 @@ public class PluginEventBridge implements EventBridge {
             }
 
             handleRequestEventData(player, message);
-
-
         });
-
-
 
         registerMessageHandler(MessageType.REQUEST_EVENT_PROGRESS, message -> {
             String eventId = message.getPayload().get("event_id");
@@ -140,11 +136,24 @@ public class PluginEventBridge implements EventBridge {
 
         registerMessageHandler(MessageType.UI_BUTTON_CLICKED, message -> {
             String buttonId = message.getPayload().get("button_id");
+            String action = message.getPayload().get("action");
             String eventId = message.getPayload().get("event_id");
+            UUID playerId = message.getPlayerId();
 
-            LOGGER.info("Button clicked: " + buttonId + " on event " + eventId);
+            Player player = plugin.getServer().getPlayer(playerId);
+            if (player == null) {
+                LOGGER.warning("Player not found for button click: " + playerId);
+                return;
+            }
+
+            LOGGER.info("Processing button click: button=" + buttonId + ", action=" + action +
+                    ", event=" + eventId + ", player=" + player.getName());
+
+            handleButtonAction(player, action, eventId, buttonId);
         });
-        // ✅ NUEVO FASE 4A: Handler para REQUEST_UI_CONFIG
+
+
+        // Handler para REQUEST_UI_CONFIG
         registerMessageHandler(MessageType.REQUEST_UI_CONFIG, message -> {
             UUID playerId = message.getPlayerId();
             Player player = plugin.getServer().getPlayer(playerId);
@@ -156,14 +165,10 @@ public class PluginEventBridge implements EventBridge {
 
             handleRequestUIConfig(player, message);
         });
-
-
-
     }
 
-
     /**
-     * NUEVO MÉTODO: Envía TODOS los eventos al cliente, organizados por estado.
+     * Envía TODOS los eventos al cliente, organizados por estado.
      */
     private void handleRequestEventData(Player player, BridgeMessage message) {
         UUID playerId = player.getUniqueId();
@@ -182,6 +187,63 @@ public class PluginEventBridge implements EventBridge {
             eventData.put("displayName", eventDef.getDisplayName());
             eventData.put("description", eventDef.getDescription());
 
+            // ← NUEVO: Enviar icon
+            String icon = eventDef.getMetadata().getOrDefault("icon", "minecraft:paper");
+            eventData.put("icon", icon);
+
+            // ← NUEVO: Enviar category
+            String category = eventDef.getMetadata().getOrDefault("category", "general");
+            eventData.put("category", category);
+
+            // ← NUEVO: Enviar difficulty
+            String difficulty = eventDef.getMetadata().getOrDefault("difficulty", "medium");
+            eventData.put("difficulty", difficulty);
+
+            // ← NUEVO: Enviar rewards
+            String rewardsJson = eventDef.getMetadata().getOrDefault("rewards_data", "{}");
+            eventData.put("rewards", rewardsJson);
+
+            // ← NUEVO: Leer repeatable desde metadata
+            String repeatableStr = eventDef.getMetadata().getOrDefault("repeatable", "false");
+            boolean repeatable = Boolean.parseBoolean(repeatableStr);
+            eventData.put("repeatable", repeatable); // ← AGREGAR AL JSON
+
+            // ✅ NUEVO: Enviar dependencies (ANTES de calcular isLocked)
+            List<String> dependencies = new ArrayList<>();
+            String depsJson = eventDef.getMetadata().get("dependencies");
+            if (depsJson != null && !depsJson.isEmpty()) {
+                try {
+                    dependencies = new com.google.gson.Gson().fromJson(
+                            depsJson,
+                            new com.google.gson.reflect.TypeToken<List<String>>(){}.getType()
+                    );
+                } catch (Exception e) {
+                    LOGGER.warning("Failed to parse dependencies for event " + eventDef.getId());
+                }
+            }
+
+            // Serializar dependencies como JSON
+            eventData.put("dependencies", new com.google.gson.Gson().toJson(dependencies));
+
+// ✅ NUEVO: Calcular isLocked AHORA (con las dependencies ya cargadas)
+            boolean isLocked = false;
+            if (!dependencies.isEmpty()) {
+                // Verificar si todas las dependencies están completadas
+                for (String depId : dependencies) {
+                    var depProgress = plugin.getStorage().getProgress(playerId, depId);
+                    if (depProgress.isEmpty() || depProgress.get().getState() != EventState.COMPLETED) {
+                        isLocked = true;
+                        break;
+                    }
+                }
+            }
+
+
+            eventData.put("isLocked", isLocked);
+
+            LOGGER.info("Event '" + eventDef.getId() + "' - locked: " + isLocked + ", deps: " + dependencies.size());
+
+
             var progressOpt = plugin.getStorage().getProgress(playerId, eventDef.getId());
 
             if (progressOpt.isPresent()) {
@@ -190,6 +252,7 @@ public class PluginEventBridge implements EventBridge {
                 eventData.put("state", progress.getState().name());
                 eventData.put("overallProgress", String.valueOf(progress.getOverallProgress()));
                 eventData.put("startedAt", String.valueOf(progress.getStartedAt()));
+
 
                 if (progress.getState() == EventState.IN_PROGRESS) {
                     for (ObjectiveDefinition objDef : eventDef.getObjectives()) {
@@ -207,18 +270,22 @@ public class PluginEventBridge implements EventBridge {
                     }
                 }
             } else {
-                // Evento AVAILABLE - Enviar info del primer objetivo
+// Evento AVAILABLE - Enviar info del primer objetivo
                 eventData.put("state", EventState.AVAILABLE.name());
                 eventData.put("overallProgress", "0.0");
                 eventData.put("startedAt", "0");
 
-                // ✅ NUEVO: Agregar descripción del primer objetivo
+// ✅ SIEMPRE enviar objetivo y progreso (incluso si es 0/X)
                 if (!eventDef.getObjectives().isEmpty()) {
                     ObjectiveDefinition firstObjective = eventDef.getObjectives().get(0);
                     eventData.put("currentObjective", firstObjective.getDescription());
                     eventData.put("currentProgress", 0);
                     eventData.put("targetProgress", firstObjective.getTargetAmount());
+
+                    LOGGER.info("Sending AVAILABLE event '" + eventDef.getId() + "' with objective: " +
+                            firstObjective.getDescription() + " (0/" + firstObjective.getTargetAmount() + ")");
                 }
+
             }
 
             eventsList.add(eventData);
@@ -241,7 +308,7 @@ public class PluginEventBridge implements EventBridge {
 
             sendMessage(response);
 
-            LOGGER.info("Sent " + eventsList.size() + " events to player " + player.getName());
+            LOGGER.info("Sent " + eventsList.size() + " events (with repeatable flags) to player " + player.getName());
 
         } catch (Exception e) {
             LOGGER.severe("Failed to serialize events: " + e.getMessage());
@@ -249,7 +316,6 @@ public class PluginEventBridge implements EventBridge {
             sendErrorResponse(message, "Failed to load events", player);
         }
     }
-
 
     private void sendErrorResponse(BridgeMessage originalMessage, String errorMessage, Player player) {
         Map<String, String> payload = Map.of(
@@ -424,6 +490,224 @@ public class PluginEventBridge implements EventBridge {
         data.put("children", childrenData);
 
         return data;
+    }
+    /**
+     * Ejecuta la acción de un botón clickeado.
+     */
+    private void handleButtonAction(Player player, String action, String eventId, String buttonId) {
+        try {
+            switch (action) {
+                case "start_event" -> {
+                    if (eventId == null || eventId.isEmpty()) {
+                        player.sendMessage("§cError: No event_id specified");
+                        return;
+                    }
+
+                    // Verificar que el evento existe
+                    var eventOpt = plugin.getStorage().getEventDefinition(eventId);
+                    if (eventOpt.isEmpty()) {
+                        player.sendMessage("§cEvent not found: " + eventId);
+                        return;
+                    }
+
+                    var eventDef = eventOpt.get();
+
+                    // ✅ NUEVO: Verificar dependencies ANTES de iniciar
+                    String depsJson = eventDef.getMetadata().get("dependencies");
+                    if (depsJson != null && !depsJson.isEmpty()) {
+                        try {
+                            List<String> dependencies = new com.google.gson.Gson().fromJson(
+                                    depsJson,
+                                    new com.google.gson.reflect.TypeToken<List<String>>(){}.getType()
+                            );
+
+                            // Verificar si todas están completadas
+                            List<String> missingDeps = new ArrayList<>();
+                            for (String depId : dependencies) {
+                                var depProgress = plugin.getStorage().getProgress(player.getUniqueId(), depId);
+                                if (depProgress.isEmpty() || depProgress.get().getState() != EventState.COMPLETED) {
+                                    // Obtener nombre del evento faltante
+                                    plugin.getStorage().getEventDefinition(depId).ifPresent(dep -> {
+                                        missingDeps.add(dep.getDisplayName());
+                                    });
+                                }
+                            }
+
+                            if (!missingDeps.isEmpty()) {
+                                player.sendMessage("§c🔒 This event is locked!");
+                                player.sendMessage("§7You must complete these first:");
+                                for (String depName : missingDeps) {
+                                    player.sendMessage("  §e• " + depName);
+                                }
+                                return;
+                            }
+
+                        } catch (Exception e) {
+                            LOGGER.warning("Failed to check dependencies for " + eventId);
+                        }
+                    }
+
+                    // Leer repeatable
+                    String repeatableStr = eventDef.getMetadata().getOrDefault("repeatable", "false");
+                    boolean repeatable = Boolean.parseBoolean(repeatableStr);
+
+                    var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+
+                    if (progressOpt.isPresent()) {
+                        var progress = progressOpt.get();
+
+                        if (progress.getState() == EventState.COMPLETED) {
+                            if (!repeatable) {
+                                player.sendMessage("§cYou have already completed this event!");
+                                return;
+                            }
+
+                            // Reiniciar evento repeatable
+                            plugin.getStorage().removeProgress(player.getUniqueId(), eventId);
+                            player.sendMessage("§eRestarting event...");
+
+                            // Notificar cambio a AVAILABLE
+                            notifyStateChange(player.getUniqueId(), eventId, EventState.AVAILABLE);
+
+                        } else if (progress.getState() == EventState.IN_PROGRESS) {
+                            player.sendMessage("§eThis event is already in progress!");
+                            return;
+                        }
+                    }
+
+                    // Crear progreso y iniciar
+                    var progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
+                    progress.start();
+
+                    // ✅ NUEVO: Registrar evento activo en el índice
+                    plugin.getObjectiveTracker().registerActiveEvent(player.getUniqueId(), eventId);
+
+                    player.sendMessage("§aStarted event: " + eventDef.getDisplayName());
+
+                    // ✅ CRÍTICO: Notificar cambio de estado
+                    notifyStateChange(player.getUniqueId(), eventId, EventState.IN_PROGRESS);
+
+                    // ✅ CRÍTICO: Notificar progreso inicial
+                    if (!eventDef.getObjectives().isEmpty()) {
+                        var firstObjective = eventDef.getObjectives().get(0);
+
+                        this.notifyProgressUpdate(
+                                player.getUniqueId(),
+                                eventId,
+                                firstObjective.getId(),
+                                0,
+                                firstObjective.getTargetAmount(),
+                                firstObjective.getDescription()
+                        );
+                    }
+
+                    LOGGER.info("✓ Event started successfully: " + eventId);
+                }
+                case "abandon_event" -> { // ← NUEVO
+                    if (eventId == null || eventId.isEmpty()) {
+                        player.sendMessage("§cError: No event_id specified");
+                        return;
+                    }
+
+                    // Verificar progreso
+                    var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+                    if (progressOpt.isEmpty()) {
+                        player.sendMessage("§7You haven't started this event.");
+                        return;
+                    }
+
+                    var progress = progressOpt.get();
+
+                    // Solo se puede abandonar si está IN_PROGRESS
+                    if (progress.getState() != EventState.IN_PROGRESS) {
+                        player.sendMessage("§cThis event is not in progress.");
+                        return;
+                    }
+
+                    // Obtener definición para saber si es repeatable
+                    var eventOpt = plugin.getStorage().getEventDefinition(eventId);
+                    if (eventOpt.isEmpty()) {
+                        player.sendMessage("§cEvent not found: " + eventId);
+                        return;
+                    }
+
+                    var eventDef = eventOpt.get();
+                    String repeatableStr = eventDef.getMetadata().getOrDefault("repeatable", "false");
+                    boolean repeatable = Boolean.parseBoolean(repeatableStr);
+
+                    if (repeatable) {
+                        // Repeatable: resetear a AVAILABLE
+                        plugin.getStorage().removeProgress(player.getUniqueId(), eventId);
+                        // ✅ NUEVO: Desregistrar evento activo
+                        plugin.getObjectiveTracker().unregisterActiveEvent(player.getUniqueId(), eventId);
+                        player.sendMessage("§eEvent abandoned. You can start it again.");
+
+                        notifyStateChange(player.getUniqueId(), eventId, EventState.AVAILABLE);
+
+                        LOGGER.info("✓ Event abandoned (reset to AVAILABLE): " + eventId);
+
+                    } else {
+                        // No repeatable: marcar como FAILED
+                        progress.fail(); // Asumiendo que existe este método
+// ✅ NUEVO: Desregistrar evento activo
+                        plugin.getObjectiveTracker().unregisterActiveEvent(player.getUniqueId(), eventId);
+                        player.sendMessage("§cEvent failed. It cannot be restarted.");
+
+                        notifyStateChange(player.getUniqueId(), eventId, EventState.FAILED);
+
+                        LOGGER.info("✓ Event abandoned (marked as FAILED): " + eventId);
+                    }
+                }
+
+                case "view_progress" -> {
+                    if (eventId == null || eventId.isEmpty()) {
+                        player.sendMessage("§cError: No event_id specified");
+                        return;
+                    }
+
+                    var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
+                    if (progressOpt.isEmpty()) {
+                        player.sendMessage("§7You haven't started this event yet.");
+                        return;
+                    }
+
+                    var progress = progressOpt.get();
+                    player.sendMessage("§6=== Progress ===");
+                    player.sendMessage("§eState: §f" + progress.getState());
+                    player.sendMessage("§eProgress: §f" + String.format("%.1f%%", progress.getOverallProgress() * 100));
+                }
+
+                default -> {
+                    LOGGER.warning("Unknown button action: " + action);
+                    player.sendMessage("§cUnknown action: " + action);
+                }
+            }
+
+        } catch (Exception e) {
+            LOGGER.severe("Failed to handle button action: " + e.getMessage());
+            e.printStackTrace();
+            player.sendMessage("§cFailed to execute action");
+        }
+    }
+
+    /**
+     * Notifica cambio de estado al cliente.
+     */
+    public void notifyStateChange(UUID playerId, String eventId, EventState newState) {
+        Map<String, String> payload = Map.of(
+                "event_id", eventId,
+                "new_state", newState.name()
+        );
+
+        BridgeMessage message = new PluginBridgeMessage(
+                MessageType.EVENT_STATE_CHANGED,
+                payload,
+                playerId
+        );
+
+        sendMessage(message);
+
+        LOGGER.info("✓ Notified state change to client: event=" + eventId + ", state=" + newState);
     }
 
 }

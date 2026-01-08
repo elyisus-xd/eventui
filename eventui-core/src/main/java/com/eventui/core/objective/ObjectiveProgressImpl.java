@@ -1,9 +1,10 @@
-package com.eventui.core.v2.objective;
+package com.eventui.core.objective;
 
 import com.eventui.api.objective.ObjectiveProgress;
 
 /**
- * Implementación mutable de ObjectiveProgress.*
+ * Implementación mutable de ObjectiveProgress.
+ *
  * ARQUITECTURA:
  * - Esta clase SÍ es mutable (el progreso cambia)
  * - El PLUGIN gestiona instancias de esta clase
@@ -74,6 +75,7 @@ public class ObjectiveProgressImpl implements ObjectiveProgress {
 
     /**
      * Establece el progreso a una cantidad específica.
+     * ✅ Usado para COLLECT_ITEM (inventario) y otros objetivos que requieren seteo directo.
      *
      * @param amount Nueva cantidad
      */

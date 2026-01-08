@@ -67,7 +67,7 @@ public class EventViewModel {
             }
         });
 
-// Escuchar cambios de estado
+        // Escuchar cambios de estado
         bridge.registerMessageHandler(MessageType.EVENT_STATE_CHANGED, message -> {
             String eventId = message.getPayload().get("event_id");
             String newStateStr = message.getPayload().get("new_state");
@@ -79,7 +79,7 @@ public class EventViewModel {
 
                 updateStateInCache(eventId, newState);
 
-                // ✅ NUEVO: Si es COMPLETED, solicitar datos frescos del servidor
+                // ✅ Si es COMPLETED o AVAILABLE, solicitar datos frescos del servidor
                 if (newState == EventState.COMPLETED || newState == EventState.AVAILABLE) {
                     LOGGER.info("Requesting fresh data after state change to {}", newState);
                     requestEvents(); // Recargar todos los eventos
@@ -93,6 +93,16 @@ public class EventViewModel {
         bridge.registerMessageHandler(MessageType.EVENT_DATA_RESPONSE, message -> {
             LOGGER.info("Received EVENT_DATA_RESPONSE");
             handleEventDataResponse(message);
+        });
+
+        bridge.registerMessageHandler(MessageType.EVENT_RELOAD_NOTIFICATION, message -> {
+            LOGGER.info("⚠️ Server reloaded events, clearing cache and requesting fresh data");
+
+            // Limpiar caché
+            eventsCache.clear();
+
+            // Solicitar eventos frescos
+            requestEvents();
         });
 
         LOGGER.info("Bridge subscriptions registered");
@@ -111,7 +121,6 @@ public class EventViewModel {
             LOGGER.warn("Cannot update state, event not in cache: {}", eventId);
         }
     }
-
 
     /**
      * NUEVO: Procesa la respuesta con TODOS los eventos del servidor.
@@ -143,6 +152,10 @@ public class EventViewModel {
                 String displayName = (String) eventMap.get("displayName");
                 String description = (String) eventMap.get("description");
                 String stateStr = (String) eventMap.get("state");
+                String icon = (String) eventMap.getOrDefault("icon", "minecraft:paper");
+                String category = (String) eventMap.getOrDefault("category", "general");
+                String difficulty = (String) eventMap.getOrDefault("difficulty", "easy");
+                String rewardsJson = (String) eventMap.getOrDefault("rewards", "{}");
 
                 EventState state = EventState.valueOf(stateStr);
 
@@ -157,28 +170,89 @@ public class EventViewModel {
                     currentObjective = (String) eventMap.get("currentObjective");
                 }
 
+                // Parsear repeatable
+                boolean repeatable = false;
+                Object repeatableObj = eventMap.get("repeatable");
+                if (repeatableObj instanceof Boolean) {
+                    repeatable = (Boolean) repeatableObj;
+                } else if (repeatableObj instanceof String) {
+                    repeatable = Boolean.parseBoolean((String) repeatableObj);
+                }
+
+                long startedAt = 0;
+                if (eventMap.containsKey("startedAt")) {
+                    startedAt = Long.parseLong(eventMap.get("startedAt").toString());
+                }
+
+                // ✅ NUEVO: Parsear dependencies desde JSON
+                List<String> dependencies = new ArrayList<>();
+                Object depsObj = eventMap.get("dependencies");
+                if (depsObj instanceof String) {
+                    // El servidor envía como JSON string
+                    String depsJson = (String) depsObj;
+                    if (!depsJson.isEmpty() && !depsJson.equals("[]")) {
+                        try {
+                            Type listStringType = new TypeToken<List<String>>(){}.getType();
+                            dependencies = gson.fromJson(depsJson, listStringType);
+                        } catch (Exception e) {
+                            LOGGER.warn("Failed to parse dependencies for event {}", id);
+                        }
+                    }
+                } else if (depsObj instanceof List) {
+                    // Por si acaso viene como lista directa
+                    for (Object dep : (List<?>) depsObj) {
+                        if (dep instanceof String) {
+                            dependencies.add((String) dep);
+                        }
+                    }
+                }
+
+                // ✅ CRÍTICO: Leer isLocked DEL SERVIDOR (no calcularlo)
+                boolean isLocked = false;
+                Object isLockedObj = eventMap.get("isLocked");
+                if (isLockedObj instanceof Boolean) {
+                    isLocked = (Boolean) isLockedObj;
+                } else if (isLockedObj instanceof String) {
+                    isLocked = Boolean.parseBoolean((String) isLockedObj);
+                }
+
+                // ✅ CONSTRUCTOR con 15 parámetros
                 EventData eventData = new EventData(
-                        id,
-                        displayName,
-                        description,
-                        state,
-                        currentProgress,
-                        targetProgress,
-                        currentObjective
+                        id,                       // 1
+                        displayName,              // 2
+                        description,              // 3
+                        state,                    // 4
+                        currentProgress,          // 5
+                        targetProgress,           // 6
+                        currentObjective,         // 7
+                        repeatable,               // 8
+                        icon,                     // 9
+                        category,                 // 10
+                        difficulty,               // 11
+                        rewardsJson,              // 12
+                        startedAt,                // 13
+                        dependencies,             // 14
+                        isLocked                  // 15
                 );
 
                 eventsCache.put(id, eventData);
 
-                LOGGER.info("  Loaded event: {} - {} (state={})", id, displayName, state);
+                LOGGER.info("  Loaded event: {} - {} (state={}, locked={}, deps={})",
+                        id, displayName, state, isLocked, dependencies.size());
             }
 
             LOGGER.info("✓ Successfully loaded {} events into cache", eventsCache.size());
+
+            // ✅ LOG CRÍTICO: Verificar cuántos están locked
+            long lockedCount = eventsCache.values().stream().filter(e -> e.isLocked).count();
+            LOGGER.info(">>> LOCKED EVENTS COUNT: {}", lockedCount);
 
             // Notificar a la UI
             notifyListeners();
 
         } catch (Exception e) {
             LOGGER.error("Failed to process EVENT_DATA_RESPONSE", e);
+            e.printStackTrace();
         }
     }
 
@@ -199,14 +273,23 @@ public class EventViewModel {
         } else {
             LOGGER.info("Event not in cache, creating new entry: {}", eventId);
 
+            // ✅ CORREGIDO: 15 parámetros
             EventData newEvent = new EventData(
-                    eventId,
-                    "Event " + eventId,
-                    "Loading...",
-                    EventState.IN_PROGRESS,
-                    current,
-                    target,
-                    objectiveDescription != null ? objectiveDescription : "Loading..."
+                    eventId,                                          // 1
+                    "Event " + eventId,                               // 2
+                    "Loading...",                                     // 3
+                    EventState.IN_PROGRESS,                           // 4
+                    current,                                          // 5
+                    target,                                           // 6
+                    objectiveDescription != null ? objectiveDescription : "Loading...", // 7
+                    false,                                            // 8 - repeatable desconocido
+                    "minecraft:paper",                                // 9 - icon por defecto
+                    "general",                                        // 10 - category por defecto
+                    "easy",                                           // 11 - difficulty por defecto (String)
+                    "{}",                                             // 12 - rewards vacío
+                    0L,                                               // 13 - startedAt desconocido
+                    new ArrayList<>(),                                // 14 - dependencies vacío
+                    false                                             // 15 - isLocked false por defecto
             );
 
             eventsCache.put(eventId, newEvent);
@@ -277,6 +360,17 @@ public class EventViewModel {
     }
 
     /**
+     * Actualiza la lista de eventos (llamado desde handlers externos).
+     */
+    public void updateEvents(List<EventData> newEvents) {
+        eventsCache.clear();
+        for (EventData event : newEvents) {
+            eventsCache.put(event.id, event);
+        }
+        notifyListeners();
+    }
+
+    /**
      * Limpia recursos.
      */
     public void dispose() {
@@ -292,13 +386,25 @@ public class EventViewModel {
         public final String id;
         public final String displayName;
         public final String description;
+        public final String rewardsJson;
         public EventState state;
         public int currentProgress;
         public int targetProgress;
         public String currentObjectiveDescription;
+        public boolean repeatable;
+        public final String icon;
+        public final String category;
+        public final String difficulty;  // ✅ CORREGIDO: String, no int
+        public long startedAt;
+        public final List<String> dependencies;
+        public final boolean isLocked;
+        public boolean hasRewards;
 
         public EventData(String id, String displayName, String description, EventState state,
-                         int currentProgress, int targetProgress, String currentObjectiveDescription) {
+                         int currentProgress, int targetProgress, String currentObjectiveDescription,
+                         boolean repeatable, String icon, String category, String difficulty,
+                         String rewardsJson, long startedAt, List<String> dependencies,
+                         boolean isLocked) {
             this.id = id;
             this.displayName = displayName;
             this.description = description;
@@ -306,6 +412,18 @@ public class EventViewModel {
             this.currentProgress = currentProgress;
             this.targetProgress = targetProgress;
             this.currentObjectiveDescription = currentObjectiveDescription;
+            this.repeatable = repeatable;
+            this.icon = icon;
+            this.category = category;
+            this.difficulty = difficulty;  // ✅ String
+            this.rewardsJson = rewardsJson;
+            this.startedAt = startedAt;
+            this.dependencies = dependencies;
+            this.isLocked = isLocked;
+        }
+
+        public boolean hasRewards() {
+            return rewardsJson != null && !rewardsJson.equals("{}");
         }
 
         public float getProgressPercentage() {

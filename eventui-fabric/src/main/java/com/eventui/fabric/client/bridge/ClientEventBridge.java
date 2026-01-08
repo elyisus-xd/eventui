@@ -6,6 +6,7 @@ import com.eventui.api.bridge.MessageType;
 import com.eventui.api.event.EventDefinition;
 import com.eventui.api.event.EventProgress;
 import com.eventui.api.ui.UIConfig;
+import com.eventui.fabric.client.ui.QuestTrackerHUD;
 import com.eventui.fabric.client.viewmodel.EventViewModel;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.player.Player;
@@ -196,6 +197,7 @@ public class ClientEventBridge implements EventBridge {
             cache.cacheUIConfig(uiId, uiDataJson);
         });
 
+
         // Handler para respuestas de datos de eventos
         registerMessageHandler(MessageType.EVENT_DATA_RESPONSE, message -> {
             cache.handleEventDataResponse(message);
@@ -210,12 +212,16 @@ public class ClientEventBridge implements EventBridge {
         registerMessageHandler(MessageType.PROGRESS_UPDATE, message -> {
             LOGGER.info("Progress update received: {}", message.getPayload());
             cache.invalidateProgress(message.getPayload().get("event_id"));
+
+            QuestTrackerHUD.forceUpdate();
         });
 
         // Handler para cambios de estado
         registerMessageHandler(MessageType.EVENT_STATE_CHANGED, message -> {
             LOGGER.info("Event state changed: {}", message.getPayload());
             cache.invalidateEvent(message.getPayload().get("event_id"));
+
+            QuestTrackerHUD.forceUpdate();
         });
     }
 

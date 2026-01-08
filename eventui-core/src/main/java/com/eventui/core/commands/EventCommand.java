@@ -1,39 +1,33 @@
-package com.eventui.core.v2.commands;
+package com.eventui.core.commands;
 
 import com.eventui.api.event.EventDefinition;
 import com.eventui.api.event.EventProgress;
-import com.eventui.core.v2.EventUIPlugin;
-import com.eventui.core.v2.event.EventProgressImpl;
+import com.eventui.core.bridge.PluginBridgeMessage;
+import com.eventui.core.EventUIPlugin;
+import com.eventui.core.event.EventProgressImpl;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
-import com.mojang.brigadier.suggestion.Suggestions;
-import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import com.mojang.brigadier.context.CommandContext;
 
 import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Logger;
-import java.util.concurrent.CompletableFuture;
 import java.util.Collection;
 
 /**
- * Comando de testing para la FASE 1.
+ * Comando de testing para EventUI.
  * Comandos:
  * - /eventui list - Lista todos los eventos cargados
  * - /eventui info <id> - Muestra información de un evento
  * - /eventui progress <id> - Muestra tu progreso en un evento
  * - /eventui start <id> - Inicia un evento
- * - /eventui reload - Recarga eventos desde JSON
+ * - /eventui reload - Recarga eventos desde YAML
  */
 public class EventCommand implements CommandExecutor {
 
     private static final Logger LOGGER = Logger.getLogger(EventCommand.class.getName());
-
 
     private final EventUIPlugin plugin;
 
@@ -69,14 +63,13 @@ public class EventCommand implements CommandExecutor {
             case "reset" -> handleReset(sender, args);
             case "complete" -> handleComplete(sender, args);
             case "debug" -> handleDebug(sender, args);
-            case "setprogress" -> handleSetProgress(sender, args);     // ✅ NUEVO
-            case "reloadevent" -> handleReloadEvent(sender, args);     // ✅ NUEVO
+            case "setprogress" -> handleSetProgress(sender, args);
+            case "reloadevent" -> handleReloadEvent(sender, args);
             default -> sender.sendMessage("§cUnknown command. Use /ev for help");
         }
 
         return true;
     }
-
 
     private void handleList(CommandSender sender) {
         var events = plugin.getStorage().getAllEventDefinitions();
@@ -172,6 +165,10 @@ public class EventCommand implements CommandExecutor {
 
             var eventDef = eventDefOpt.get();
 
+            // ← NUEVO: Leer flag repeatable desde metadata
+            String repeatableStr = eventDef.getMetadata().getOrDefault("repeatable", "false");
+            boolean repeatable = Boolean.parseBoolean(repeatableStr);
+
             // Verificar progreso existente
             var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
 
@@ -179,28 +176,37 @@ public class EventCommand implements CommandExecutor {
                 var progress = progressOpt.get();
 
                 if (progress.getState() == com.eventui.api.event.EventState.COMPLETED) {
-                    sender.sendMessage("§cYou have already completed this event!");
-                    sender.sendMessage("§7This event cannot be repeated.");
-                    return;
-                }
+                    // ← NUEVO: Validar si es repeatable
+                    if (!repeatable) {
+                        sender.sendMessage("§cYou have already completed this event!");
+                        sender.sendMessage("§7This event cannot be repeated.");
+                        return;
+                    }
 
-                if (progress.getState() == com.eventui.api.event.EventState.IN_PROGRESS) {
+                    // Es repeatable: eliminar progreso viejo y continuar
+                    plugin.getStorage().removeProgress(player.getUniqueId(), eventId);
+                    sender.sendMessage("§eRestarting repeatable event...");
+
+                    // Notificar al cliente que cambió a AVAILABLE
+                    notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.AVAILABLE);
+
+                } else if (progress.getState() == com.eventui.api.event.EventState.IN_PROGRESS) {
                     sender.sendMessage("§eThis event is already in progress!");
                     sender.sendMessage("§7Use /eventui progress " + eventId + " to check your progress.");
                     return;
                 }
             }
 
-            // Iniciar el evento
+            // Crear progreso nuevo
             EventProgressImpl progress = plugin.getStorage().getOrCreateProgress(player.getUniqueId(), eventId);
             progress.start();
 
             sender.sendMessage("§aStarted event: " + eventDef.getDisplayName());
 
-            // ✅ NUEVO: Notificar cambio de estado al cliente
+            // Notificar cambio de estado al cliente
             notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.IN_PROGRESS);
 
-            // ✅ NUEVO: Notificar progreso inicial (0/target) para que se muestre en la UI
+            // Notificar progreso inicial (0/target) para que se muestre en la UI
             if (!eventDef.getObjectives().isEmpty()) {
                 var firstObjective = eventDef.getObjectives().get(0);
                 plugin.getEventBridge().notifyProgressUpdate(
@@ -220,7 +226,7 @@ public class EventCommand implements CommandExecutor {
     }
 
     /**
-     * ✅ NUEVO: Notifica cambio de estado al cliente.
+     * Notifica cambio de estado al cliente.
      */
     private void notifyStateChange(UUID playerId, String eventId, com.eventui.api.event.EventState newState) {
         java.util.Map<String, String> payload = java.util.Map.of(
@@ -228,7 +234,7 @@ public class EventCommand implements CommandExecutor {
                 "new_state", newState.name()
         );
 
-        com.eventui.api.bridge.BridgeMessage message = new com.eventui.core.v2.bridge.PluginBridgeMessage(
+        com.eventui.api.bridge.BridgeMessage message = new PluginBridgeMessage(
                 com.eventui.api.bridge.MessageType.EVENT_STATE_CHANGED,
                 payload,
                 playerId
@@ -236,7 +242,7 @@ public class EventCommand implements CommandExecutor {
 
         plugin.getEventBridge().sendMessage(message);
 
-        LOGGER.info("Notified state change to client: event={}, newState={}");
+        LOGGER.info("Notified state change to client: event=" + eventId + ", newState=" + newState);
     }
 
     private void handleReload(CommandSender sender) {
@@ -245,9 +251,31 @@ public class EventCommand implements CommandExecutor {
             return;
         }
 
-        plugin.reloadEvents();
-        sender.sendMessage("§aEvents reloaded successfully!");
+        sender.sendMessage("§eReloading events...");
+
+        try {
+            // Recargar eventos
+            plugin.reloadEvents();
+
+            int eventCount = plugin.getStorage().getAllEventDefinitions().size();
+
+            sender.sendMessage("§a✓ Events reloaded successfully!");
+            sender.sendMessage("§7Loaded " + eventCount + " event(s)");
+
+            // Notificar a todos los clientes conectados
+            int notifiedPlayers = notifyAllClientsReload();
+
+            if (notifiedPlayers > 0) {
+                sender.sendMessage("§7Notified " + notifiedPlayers + " online player(s) to refresh their UI");
+            }
+
+        } catch (Exception e) {
+            sender.sendMessage("§cFailed to reload: " + e.getMessage());
+            LOGGER.severe("Failed to reload events: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
+
 
     /**
      * Reset de eventos para testing.
@@ -267,7 +295,7 @@ public class EventCommand implements CommandExecutor {
 
         try {
             if (target.equalsIgnoreCase("all")) {
-                // Reset TODOS los eventos
+                // Reset TODOS los eventos (bypass de validación repeatable)
                 var allEvents = plugin.getStorage().getAllEventDefinitions();
                 int resetCount = 0;
 
@@ -278,7 +306,7 @@ public class EventCommand implements CommandExecutor {
                         // Eliminar progreso
                         plugin.getStorage().removeProgress(player.getUniqueId(), eventDef.getId());
 
-                        // ✅ Notificar al cliente
+                        // Notificar al cliente
                         notifyStateChange(player.getUniqueId(), eventDef.getId(), com.eventui.api.event.EventState.AVAILABLE);
 
                         resetCount++;
@@ -287,8 +315,6 @@ public class EventCommand implements CommandExecutor {
 
                 sender.sendMessage("§a✓ Reset completed!");
                 sender.sendMessage("§7Cleared progress for " + resetCount + " event(s).");
-
-                // ✅ IMPORTANTE: Solicitar refresh de la UI
                 sender.sendMessage("§7Press K to refresh the events screen.");
 
             } else {
@@ -301,6 +327,18 @@ public class EventCommand implements CommandExecutor {
                     return;
                 }
 
+                var eventDef = eventOpt.get();
+
+                // ← NUEVO: Validar repeatable antes de resetear manualmente
+                String repeatableStr = eventDef.getMetadata().getOrDefault("repeatable", "false");
+                boolean repeatable = Boolean.parseBoolean(repeatableStr);
+
+                if (!repeatable) {
+                    sender.sendMessage("§cThis event is not repeatable and cannot be reset.");
+                    sender.sendMessage("§7Use §e/ev reset all §7to force-reset everything (testing only).");
+                    return;
+                }
+
                 var progressOpt = plugin.getStorage().getProgress(player.getUniqueId(), eventId);
                 if (progressOpt.isEmpty()) {
                     sender.sendMessage("§7You haven't started this event yet.");
@@ -310,10 +348,10 @@ public class EventCommand implements CommandExecutor {
                 // Eliminar progreso
                 plugin.getStorage().removeProgress(player.getUniqueId(), eventId);
 
-                sender.sendMessage("§a✓ Event reset: " + eventOpt.get().getDisplayName());
+                sender.sendMessage("§a✓ Event reset: " + eventDef.getDisplayName());
                 sender.sendMessage("§7Progress cleared. You can start it again.");
 
-                // ✅ Notificar al cliente
+                // Notificar al cliente
                 notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.AVAILABLE);
             }
 
@@ -322,7 +360,6 @@ public class EventCommand implements CommandExecutor {
             e.printStackTrace();
         }
     }
-
 
     /**
      * Completa instantáneamente un evento (para testing).
@@ -370,10 +407,15 @@ public class EventCommand implements CommandExecutor {
 
             sender.sendMessage("§a✓ Event completed: " + eventDef.getDisplayName());
 
-            // ✅ IMPORTANTE: Notificar al cliente el cambio de estado
+            // ← NUEVO: Otorgar rewards
+            if (sender instanceof Player) {
+                plugin.getRewardManager().giveRewards((Player) sender, eventDef);
+            }
+
+            // Notificar al cliente el cambio de estado
             notifyStateChange(player.getUniqueId(), eventId, com.eventui.api.event.EventState.COMPLETED);
 
-            // ✅ NUEVO: Enviar actualización de progreso final
+            // Enviar actualización de progreso final
             if (!eventDef.getObjectives().isEmpty()) {
                 var lastObjective = eventDef.getObjectives().get(eventDef.getObjectives().size() - 1);
                 plugin.getEventBridge().notifyProgressUpdate(
@@ -391,7 +433,6 @@ public class EventCommand implements CommandExecutor {
             e.printStackTrace();
         }
     }
-
 
     /**
      * Debug info detallada de un evento.
@@ -455,6 +496,7 @@ public class EventCommand implements CommandExecutor {
 
         sender.sendMessage("§6═══════════════");
     }
+
     /**
      * Establece el progreso de un objetivo específico.
      */
@@ -547,7 +589,7 @@ public class EventCommand implements CommandExecutor {
     }
 
     /**
-     * Recarga un evento específico desde su archivo JSON.
+     * Recarga un evento específico desde su archivo YAML.
      */
     private void handleReloadEvent(CommandSender sender, String[] args) {
         if (args.length < 2) {
@@ -566,14 +608,14 @@ public class EventCommand implements CommandExecutor {
                 return;
             }
 
-            // Buscar el archivo JSON del evento
+            // Buscar el archivo YAML del evento
             java.io.File eventsDir = new java.io.File(plugin.getDataFolder(), "events");
             java.io.File[] files = eventsDir.listFiles((dir, name) -> {
-                return name.endsWith(".json") && name.contains(eventId);
+                return (name.endsWith(".yml") || name.endsWith(".yaml")) && name.contains(eventId);
             });
 
             if (files == null || files.length == 0) {
-                sender.sendMessage("§cCouldn't find JSON file for event: " + eventId);
+                sender.sendMessage("§cCouldn't find YAML file for event: " + eventId);
                 return;
             }
 
@@ -594,8 +636,36 @@ public class EventCommand implements CommandExecutor {
         }
     }
 
+    /**
+     * Notifica a todos los clientes conectados que deben recargar eventos.
+     * @return Número de jugadores notificados
+     */
+    private int notifyAllClientsReload() {
+        Collection<? extends Player> onlinePlayers = plugin.getServer().getOnlinePlayers();
 
+        if (onlinePlayers.isEmpty()) {
+            return 0;
+        }
 
+        for (Player player : onlinePlayers) {
+            java.util.Map<String, String> payload = java.util.Map.of(
+                    "reason", "server_reload",
+                    "timestamp", String.valueOf(System.currentTimeMillis())
+            );
 
+            com.eventui.api.bridge.BridgeMessage message =
+                    new PluginBridgeMessage(
+                            com.eventui.api.bridge.MessageType.EVENT_RELOAD_NOTIFICATION,
+                            payload,
+                            player.getUniqueId()
+                    );
+
+            plugin.getEventBridge().sendMessage(message);
+        }
+
+        LOGGER.info("✓ Sent reload notification to " + onlinePlayers.size() + " player(s)");
+
+        return onlinePlayers.size();
+    }
 
 }

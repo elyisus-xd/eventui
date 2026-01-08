@@ -1,4 +1,4 @@
-package com.eventui.core.v2.event;
+package com.eventui.core.event;
 
 import com.eventui.api.event.EventDefinition;
 import com.eventui.api.objective.ObjectiveDefinition;
@@ -20,7 +20,8 @@ public record EventDefinitionImpl(
         String description,
         List<ObjectiveDefinition> objectives,
         Map<String, String> uiResources,
-        Map<String, String> metadata
+        Map<String, String> metadata,
+        List<String> dependencies
 ) implements EventDefinition {
 
     // Constructor compacto para validación
@@ -72,5 +73,10 @@ public record EventDefinitionImpl(
     @Override
     public Map<String, String> getMetadata() {
         return metadata;
+    }
+
+    @Override
+    public List<String> getDependencies() {
+        return List.of();
     }
 }

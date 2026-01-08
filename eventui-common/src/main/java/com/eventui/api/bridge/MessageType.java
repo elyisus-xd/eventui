@@ -78,6 +78,9 @@ public enum MessageType {
      */
     EVENT_STATE_CHANGED,
 
+
+    EVENT_RELOAD_NOTIFICATION,
+
     /**
      * Error en el procesamiento de un mensaje
      * Payload: {"error_code": "...", "message": "..."}

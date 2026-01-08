@@ -50,4 +50,9 @@ public interface EventProgress {
      * @return Timestamp de cuando se completó (epoch millis), 0 si no completado
      */
     long getCompletedAt();
+
+    /**
+     * Falla el evento (solo si está IN_PROGRESS).
+     */
+    void fail();
 }

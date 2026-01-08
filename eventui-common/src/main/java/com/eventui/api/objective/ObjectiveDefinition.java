@@ -6,7 +6,7 @@ import java.util.Map;
  * Contrato que define QUÉ ES un objetivo dentro de un evento.*
  * ARQUITECTURA:
  * - Define estructura, NO implementa tracking
- * - El PLUGIN lee esta definición del JSON
+ * - El PLUGIN lee esta definición del YAML de configuración
  * - El PLUGIN implementa la lógica según el ObjectiveType
  * - El MOD solo usa esta info para mostrar en UI
  */
@@ -37,9 +37,9 @@ public interface ObjectiveDefinition {
     /**
      * Configuración específica del tipo de objetivo*
      * Ejemplos según tipo:
-     * - MINE_BLOCK: {"block_id": "minecraft:diamond_ore"}
-     * - KILL_ENTITY: {"entity_type": "minecraft:zombie", "min_distance": "50"}
-     * - REACH_LOCATION: {"x": "100", "y": "64", "z": "200", "radius": "5"}
+     * - MINE_BLOCK
+     * - KILL_ENTITY
+     * - REACH_LOCATION
      *
      * @return Mapa inmutable con parámetros específicos del objetivo
      */
@@ -58,5 +58,12 @@ public interface ObjectiveDefinition {
      */
     default boolean isOptional() {
         return false;
+    }
+
+    /**
+     * @return El ID del grupo al que pertenece, o null si no está agrupado
+     */
+    default String getGroupId() {
+        return null;
     }
 }
